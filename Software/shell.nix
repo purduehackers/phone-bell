@@ -7,8 +7,7 @@ pkgs.mkShell {
         clang
         pkg-config
         systemd
-        xorg.libX11
-        wayland
+        openssl
     ];
     LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
 }
