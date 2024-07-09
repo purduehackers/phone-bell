@@ -35,25 +35,36 @@ pub struct Hardware {
 
 #[cfg(not(target_family = "windows"))]
 pub fn create() -> Hardware {
-    let gpio = Gpio::new()?;
+    let Ok(gpio) = Gpio::new() else {
+        panic!("Failed to initialize GPIO")
+    };
 
-    let hook_switch = gpio.get(HOOK_SWITCH_PIN)?.into_input();
+    let Ok(hook_switch) = gpio.get(HOOK_SWITCH_PIN) else {
+        panic!("Failed to get pin")
+    };
 
-    let dial_latch = gpio.get(DIAL_LATCH_PIN)?.into_input();
-    let dial_pulse = gpio.get(DIAL_PULSE_PIN)?.into_input();
+    let Ok(dial_latch) = gpio.get(DIAL_LATCH_PIN) else {
+        panic!("Failed to get pin")
+    };
 
-    let bell_solenoid = gpio.get(BELL_SOLENOID_PIN)?.into_output();
+    let Ok(dial_pulse) = gpio.get(DIAL_PULSE_PIN) else {
+        panic!("Failed to get pin")
+    };
+
+    let Ok(bell_solenoid) = gpio.get(BELL_SOLENOID_PIN) else {
+        panic!("Failed to get pin")
+    };
 
     Hardware {
         // TODO: Add audio infrastructure
         gpio,
 
-        hook_switch,
+        hook_switch: hook_switch.into_input(),
 
-        dial_latch,
-        dial_pulse,
+        dial_latch: dial_latch.into_input(),
+        dial_pulse: dial_pulse.into_input(),
 
-        bell_solenoid,
+        bell_solenoid: bell_solenoid.into_output(),
 
         last_update_instant: Instant::now(),
 
