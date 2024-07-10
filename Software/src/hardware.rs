@@ -120,7 +120,7 @@ impl Hardware {
         #[cfg(not(target_family = "windows"))]
         let dial_latch_state = self.dial_latch.is_high();
         #[cfg(not(target_family = "windows"))]
-        let dial_pulse_state = self.dial_pulse.is_high();
+        let dial_pulse_state = self.dial_pulse.is_low();
 
         #[cfg(not(target_family = "windows"))]
         println!("Current IO: {} {} {}", dial_latch_state, dial_pulse_state, self.hook_switch.is_high());
