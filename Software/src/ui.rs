@@ -59,6 +59,8 @@ pub fn ui_entry(web_sender: Sender<(i32, String)>, _web_reciever: Receiver<i32>)
             if hook_state {
                 if in_call {
                     in_call = false;
+                    
+                    hardware.enable_dialing(true);
 
                     println!("Call Ended.");
                     let _ = web_sender.send((0, String::new()));

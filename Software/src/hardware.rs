@@ -122,9 +122,6 @@ impl Hardware {
         #[cfg(not(target_family = "windows"))]
         let dial_pulse_state = self.dial_pulse.is_low();
 
-        #[cfg(not(target_family = "windows"))]
-        println!("Current IO: {} {} {}", dial_latch_state, dial_pulse_state, self.hook_switch.is_high());
-
         #[cfg(target_family = "windows")]
         let dial_latch_state = false;
         #[cfg(target_family = "windows")]
@@ -135,9 +132,9 @@ impl Hardware {
                 self.dial_pulses += 1;
             }
         } else if self.dial_pulses > 0 {
-            if self.dial_pulses >= 10 {
+            if self.dial_pulses >= 10 && self.dialing_enabled {
                 self.dialed_number += "0";
-            } else {
+            } else if self.dialing_enabled {
                 self.dialed_number += &self.dial_pulses.to_string();
             }
 
