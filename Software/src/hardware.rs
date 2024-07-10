@@ -1,5 +1,7 @@
 use std::time::{Duration, Instant};
 
+use debouncr::{debounce_4, Debouncer, Repeat4};
+
 #[cfg(not(target_family = "windows"))]
 use rppal::gpio::{Gpio, InputPin, Level, OutputPin};
 
@@ -12,11 +14,14 @@ pub struct Hardware {
 
     #[cfg(not(target_family = "windows"))]
     hook_switch: InputPin,
+    hook_switch_debounce: Debouncer<u8, Repeat4>,
 
     #[cfg(not(target_family = "windows"))]
     dial_latch: InputPin,
+    dial_latch_debounce: Debouncer<u8, Repeat4>,
     #[cfg(not(target_family = "windows"))]
     dial_pulse: InputPin,
+    dial_pulse_debounce: Debouncer<u8, Repeat4>,
 
     #[cfg(not(target_family = "windows"))]
     bell_solenoid: OutputPin,
@@ -60,9 +65,12 @@ pub fn create() -> Hardware {
         gpio,
 
         hook_switch: hook_switch.into_input(),
+        hook_switch_debounce: debounce_4(false),
 
         dial_latch: dial_latch.into_input(),
+        dial_latch_debounce: debounce_4(false),
         dial_pulse: dial_pulse.into_input(),
+        dial_pulse_debounce: debounce_4(false),
 
         bell_solenoid: bell_solenoid.into_output(),
 
@@ -83,6 +91,12 @@ pub fn create() -> Hardware {
 pub fn create() -> Hardware {
     Hardware {
         // TODO: Add audio infrastructure
+
+        hook_switch_debounce: debounce_4(false),
+        
+        dial_latch_debounce: debounce_4(false),
+        dial_pulse_debounce: debounce_4(false),
+
         last_update_instant: Instant::now(),
 
         ringing_bell: false,
@@ -98,6 +112,14 @@ pub fn create() -> Hardware {
 
 impl Hardware {
     pub fn update(&mut self) {
+        #[cfg(not(target_family = "windows"))]
+        self.hook_switch_debounce.update(self.hook_switch.is_high());
+
+        #[cfg(not(target_family = "windows"))]
+        self.dial_latch_debounce.update(self.dial_latch.is_high());
+        #[cfg(not(target_family = "windows"))]
+        self.dial_pulse_debounce.update(self.dial_pulse.is_low());
+
         let now = Instant::now();
 
         self.bell_ring_timer += self.last_update_instant.duration_since(now);
@@ -117,15 +139,8 @@ impl Hardware {
             });
         }
 
-        #[cfg(not(target_family = "windows"))]
-        let dial_latch_state = self.dial_latch.is_high();
-        #[cfg(not(target_family = "windows"))]
-        let dial_pulse_state = self.dial_pulse.is_low();
-
-        #[cfg(target_family = "windows")]
-        let dial_latch_state = false;
-        #[cfg(target_family = "windows")]
-        let dial_pulse_state = false;
+        let dial_latch_state = self.dial_latch_debounce.is_high();
+        let dial_pulse_state = self.dial_pulse_debounce.is_high();
 
         if dial_latch_state {
             if self.last_dial_pulse_state != dial_pulse_state && dial_pulse_state {
@@ -149,11 +164,7 @@ impl Hardware {
     }
 
     pub fn get_hook_state(&self) -> bool {
-        #[cfg(not(target_family = "windows"))]
-        return self.hook_switch.is_high();
-
-        #[cfg(target_family = "windows")]
-        return true;
+        self.hook_switch_debounce.is_high()
     }
 
     pub fn enable_dialing(&mut self, enabled: bool) {
