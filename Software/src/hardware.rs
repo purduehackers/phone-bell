@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use debouncr::{debounce_16, Debouncer, Repeat16};
+use debouncr::{debounce_4, Debouncer, Repeat4};
 
 #[cfg(not(target_family = "windows"))]
 use rppal::gpio::{Gpio, InputPin, Level, OutputPin};
@@ -18,14 +18,14 @@ pub struct Hardware {
 
     #[cfg(not(target_family = "windows"))]
     hook_switch: InputPin,
-    hook_switch_debounce: Debouncer<u16, Repeat16>,
+    hook_switch_debounce: Debouncer<u8, Repeat4>,
 
     #[cfg(not(target_family = "windows"))]
     dial_latch: InputPin,
-    dial_latch_debounce: Debouncer<u16, Repeat16>,
+    dial_latch_debounce: Debouncer<u8, Repeat4>,
     #[cfg(not(target_family = "windows"))]
     dial_pulse: InputPin,
-    dial_pulse_debounce: Debouncer<u16, Repeat16>,
+    dial_pulse_debounce: Debouncer<u8, Repeat4>,
 
     #[cfg(not(target_family = "windows"))]
     bell_solenoid: OutputPin,
@@ -71,12 +71,12 @@ pub fn create() -> Hardware {
         gpio,
 
         hook_switch: hook_switch.into_input(),
-        hook_switch_debounce: debounce_16(false),
+        hook_switch_debounce: debounce_4(false),
 
         dial_latch: dial_latch.into_input(),
-        dial_latch_debounce: debounce_16(false),
+        dial_latch_debounce: debounce_4(false),
         dial_pulse: dial_pulse.into_input(),
-        dial_pulse_debounce: debounce_16(false),
+        dial_pulse_debounce: debounce_4(false),
 
         bell_solenoid: bell_solenoid.into_output(),
 
@@ -99,10 +99,10 @@ pub fn create() -> Hardware {
 
         gpio_read_timer: Duration::ZERO,
 
-        hook_switch_debounce: debounce_16(false),
+        hook_switch_debounce: debounce_4(false),
         
-        dial_latch_debounce: debounce_16(false),
-        dial_pulse_debounce: debounce_16(false),
+        dial_latch_debounce: debounce_4(false),
+        dial_pulse_debounce: debounce_4(false),
 
         ringing_bell: false,
         bell_ring_timer: Duration::ZERO,
