@@ -125,6 +125,9 @@ impl Hardware {
         self.last_update_instant = now;
 
         if self.gpio_read_timer >= Duration::from_millis(1) { // Holy mother of god, 1.4GHz is fast, delay!
+            println!("GPIO Read Delta: {}", self.gpio_read_timer.as_micros());
+            self.gpio_read_timer = Duration::ZERO;
+
             #[cfg(not(target_family = "windows"))]
             self.hook_switch_debounce.update(self.hook_switch.is_high());
     
