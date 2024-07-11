@@ -119,8 +119,10 @@ impl Hardware {
     pub fn update(&mut self) {
         let now = Instant::now();
 
-        self.gpio_read_timer += self.last_update_instant.duration_since(now);
-        self.bell_ring_timer += self.last_update_instant.duration_since(now);
+        let time_delta = now.duration_since(self.last_update_instant);
+
+        self.gpio_read_timer += time_delta;
+        self.bell_ring_timer += time_delta;
 
         self.last_update_instant = now;
 
