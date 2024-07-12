@@ -5,7 +5,7 @@ use crate::{config::KNOWN_NUMBERS, hardware};
 pub fn ui_entry(web_sender: Sender<(i32, String)>, _web_reciever: Receiver<i32>) {
     let mut hardware = hardware::create();
 
-    hardware.ring(true);
+    hardware.ring(false);
     hardware.enable_dialing(true);
 
     let mut in_call = false;

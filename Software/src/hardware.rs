@@ -127,7 +127,6 @@ impl Hardware {
         self.last_update_instant = now;
 
         if self.gpio_read_timer >= Duration::from_millis(1) { // Holy mother of god, 1.4GHz is fast, delay!
-            println!("GPIO Read Delta: {}", self.gpio_read_timer.as_micros());
             self.gpio_read_timer = Duration::ZERO;
 
             #[cfg(not(target_family = "windows"))]
@@ -143,6 +142,8 @@ impl Hardware {
             self.bell_ring_timer = Duration::ZERO;
 
             self.current_bell_signal = !self.current_bell_signal & self.ringing_bell;
+
+            println!("ring-a-ling: {} {}", self.ringing_bell, self.current_bell_signal);
 
             #[cfg(not(target_family = "windows"))]
             self.bell_solenoid.write(if self.current_bell_signal {
