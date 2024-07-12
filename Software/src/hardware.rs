@@ -145,12 +145,19 @@ impl Hardware {
 
             println!("ring-a-ling: {} {}", self.ringing_bell, self.current_bell_signal);
 
-            #[cfg(not(target_family = "windows"))]
-            self.bell_solenoid.write(if self.current_bell_signal {
-                Level::High
+            // #[cfg(not(target_family = "windows"))]
+            // self.bell_solenoid.write(if self.current_bell_signal {
+            //     Level::High
+            // } else {
+            //     Level::Low
+            // });
+            if self.current_bell_signal {
+                #[cfg(not(target_family = "windows"))]
+                self.bell_solenoid.set_high();
             } else {
-                Level::Low
-            });
+                #[cfg(not(target_family = "windows"))]
+                self.bell_solenoid.set_low();
+            }
         }
 
         let dial_latch_state = self.dial_latch_debounce.is_high();
