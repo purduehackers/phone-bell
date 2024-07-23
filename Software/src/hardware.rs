@@ -6,7 +6,7 @@ use debouncr::{debounce_4, Debouncer, Repeat4};
 use rppal::gpio::{Gpio, InputPin, Level, OutputPin};
 
 #[cfg(not(target_family = "windows"))]
-use crate::config::{BELL_SOLENOID_PIN, DIAL_LATCH_PIN, DIAL_PULSE_PIN, HOOK_SWITCH_PIN};
+use crate::config::{BELL_SOLENOID_FORWARD_PIN, BELL_SOLENOID_REVERSE_PIN, DIAL_LATCH_PIN, DIAL_PULSE_PIN, HOOK_SWITCH_PIN};
 
 pub struct Hardware {
     last_update_instant: Instant,
@@ -28,7 +28,9 @@ pub struct Hardware {
     dial_pulse_debounce: Debouncer<u8, Repeat4>,
 
     #[cfg(not(target_family = "windows"))]
-    bell_solenoid: OutputPin,
+    bell_solenoid_forward: OutputPin,
+    #[cfg(not(target_family = "windows"))]
+    bell_solenoid_reverse: OutputPin,
 
     ringing_bell: bool,
     bell_ring_timer: Duration,
@@ -58,7 +60,11 @@ pub fn create() -> Hardware {
         panic!("Failed to get pin")
     };
 
-    let Ok(bell_solenoid) = gpio.get(BELL_SOLENOID_PIN) else {
+    let Ok(bell_solenoid_forward) = gpio.get(BELL_SOLENOID_FORWARD_PIN) else {
+        panic!("Failed to get pin")
+    };
+
+    let Ok(bell_solenoid_reverse) = gpio.get(BELL_SOLENOID_REVERSE_PIN) else {
         panic!("Failed to get pin")
     };
 
@@ -78,7 +84,8 @@ pub fn create() -> Hardware {
         dial_pulse: dial_pulse.into_input(),
         dial_pulse_debounce: debounce_4(false),
 
-        bell_solenoid: bell_solenoid.into_output(),
+        bell_solenoid_forward: bell_solenoid_forward.into_output(),
+        bell_solenoid_reverse: bell_solenoid_reverse.into_output(),
 
         ringing_bell: false,
         bell_ring_timer: Duration::ZERO,
@@ -100,7 +107,7 @@ pub fn create() -> Hardware {
         gpio_read_timer: Duration::ZERO,
 
         hook_switch_debounce: debounce_4(false),
-        
+
         dial_latch_debounce: debounce_4(false),
         dial_pulse_debounce: debounce_4(false),
 
@@ -131,32 +138,28 @@ impl Hardware {
 
             #[cfg(not(target_family = "windows"))]
             self.hook_switch_debounce.update(self.hook_switch.is_high());
-    
+
             #[cfg(not(target_family = "windows"))]
             self.dial_latch_debounce.update(self.dial_latch.is_high());
             #[cfg(not(target_family = "windows"))]
             self.dial_pulse_debounce.update(self.dial_pulse.is_low());
         }
 
-        if self.bell_ring_timer >= Duration::from_secs_f64(0.05) {
+        if self.bell_ring_timer >= Duration::from_millis(50) {
             self.bell_ring_timer = Duration::ZERO;
 
             self.current_bell_signal = !self.current_bell_signal & self.ringing_bell;
 
-            println!("ring-a-ling: {} {}", self.ringing_bell, self.current_bell_signal);
-
-            // #[cfg(not(target_family = "windows"))]
-            // self.bell_solenoid.write(if self.current_bell_signal {
-            //     Level::High
-            // } else {
-            //     Level::Low
-            // });
             if self.current_bell_signal {
                 #[cfg(not(target_family = "windows"))]
-                self.bell_solenoid.set_high();
+                self.bell_solenoid_forward.set_high();
+                #[cfg(not(target_family = "windows"))]
+                self.bell_solenoid_reverse.set_low();
             } else {
                 #[cfg(not(target_family = "windows"))]
-                self.bell_solenoid.set_low();
+                self.bell_solenoid_forward.set_low();
+                #[cfg(not(target_family = "windows"))]
+                self.bell_solenoid_reverse.set_high();
             }
         }
 
