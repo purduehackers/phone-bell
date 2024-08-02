@@ -1,4 +1,4 @@
-23647244539185414
+23648967094687361
 AdditionalComponents
 CYL104R-22UH
 
@@ -27,6 +27,13 @@ YIYUAN YTC-TC6-465
 0
 8
 7
+AdditionalComponents
+YPRH104R-220M
+
+
+0
+2
+2
 Audio_Module
 Reverb_BTDR-1H
 Digital Reverberation Unit, http://www.belton.co.kr/inc/downfile.php?seq=17&file=pdf (footprint from http://www.uk-electronic.de/PDF/BTDR-1.pdf)

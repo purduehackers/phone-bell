@@ -5444,6 +5444,16 @@
 	)
 	(wire
 		(pts
+			(xy 207.01 130.81) (xy 209.55 130.81)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "46c9dce3-e412-4fd6-a6ab-93d1754d08b9")
+	)
+	(wire
+		(pts
 			(xy 139.7 134.62) (xy 139.7 137.16)
 		)
 		(stroke
@@ -5784,23 +5794,13 @@
 	)
 	(wire
 		(pts
-			(xy 224.79 130.81) (xy 220.98 130.81)
+			(xy 224.79 130.81) (xy 217.17 130.81)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "e72c6c2b-7263-4f2a-adc8-9688691099be")
-	)
-	(wire
-		(pts
-			(xy 209.55 130.81) (xy 213.36 130.81)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "eef6eeb4-89e3-45ed-b736-2e99162f6650")
 	)
 	(wire
 		(pts
@@ -6266,7 +6266,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 201.93 130.81 270)
+		(at 199.39 130.81 270)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -6274,7 +6274,7 @@
 		(dnp no)
 		(uuid "003b112c-cbed-49dc-b1b4-128401e55a91")
 		(property "Reference" "#PWR017"
-			(at 195.58 130.81 0)
+			(at 193.04 130.81 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6283,7 +6283,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 198.12 130.8101 90)
+			(at 195.58 130.8101 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6292,7 +6292,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 201.93 130.81 0)
+			(at 199.39 130.81 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6301,7 +6301,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 201.93 130.81 0)
+			(at 199.39 130.81 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6310,7 +6310,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 201.93 130.81 0)
+			(at 199.39 130.81 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6402,7 +6402,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 205.74 130.81 270)
+		(at 203.2 130.81 270)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -6411,7 +6411,7 @@
 		(fields_autoplaced yes)
 		(uuid "0920b035-4964-4719-a1e8-6e5384cfec09")
 		(property "Reference" "C2"
-			(at 205.74 123.19 90)
+			(at 203.2 123.19 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6419,7 +6419,7 @@
 			)
 		)
 		(property "Value" "20uF"
-			(at 205.74 125.73 90)
+			(at 203.2 125.73 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6427,7 +6427,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
-			(at 201.93 131.7752 0)
+			(at 199.39 131.7752 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6436,7 +6436,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 205.74 130.81 0)
+			(at 203.2 130.81 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6445,7 +6445,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 205.74 130.81 0)
+			(at 203.2 130.81 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -8549,7 +8549,7 @@
 	)
 	(symbol
 		(lib_id "Device:L")
-		(at 217.17 130.81 90)
+		(at 213.36 130.81 90)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -8558,23 +8558,23 @@
 		(fields_autoplaced yes)
 		(uuid "55b9a7bd-7958-4a76-b0bc-dcd7066019c4")
 		(property "Reference" "L1"
-			(at 217.17 125.73 90)
+			(at 213.36 125.73 90)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
 			)
 		)
-		(property "Value" "22uH"
-			(at 217.17 128.27 90)
+		(property "Value" "YPRH104R-220M"
+			(at 213.36 128.27 90)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
 			)
 		)
-		(property "Footprint" "AdditionalComponents:CYL104R-22UH"
-			(at 217.17 130.81 0)
+		(property "Footprint" "AdditionalComponents:YPRH104R-220M"
+			(at 213.36 130.81 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -8583,7 +8583,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 217.17 130.81 0)
+			(at 213.36 130.81 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -8592,7 +8592,7 @@
 			)
 		)
 		(property "Description" "Inductor"
-			(at 217.17 130.81 0)
+			(at 213.36 130.81 0)
 			(effects
 				(font
 					(size 1.27 1.27)
