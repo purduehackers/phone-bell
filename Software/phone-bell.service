@@ -1,0 +1,14 @@
+[Unit]
+Description=Phone Bell Service
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=hackers
+ExecStart=/home/hackers/phone-bell-software
+
+[Install]
+WantedBy=default.target
