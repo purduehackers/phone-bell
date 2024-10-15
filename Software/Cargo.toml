@@ -3,11 +3,14 @@ name = "phone-bell-software"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-debouncr = "0.2.2"
-reqwest = { version = "0.11", features = ["blocking", "json"] }
+# emulated
+druid = { version = "0.8.3", features = ["image", "png"], optional = true }
 
-[target.'cfg(unix)'.dependencies]
-rppal = { version = "0.17.1", features = ["hal"] }
+# real
+rppal = { version = "0.17.1", features = ["hal"], optional = true }
+debouncr = { version = "0.2.2", optional = true }
+
+[features]
+default = ["dep:druid"]
+real = ["dep:rppal", "dep:debouncr"]

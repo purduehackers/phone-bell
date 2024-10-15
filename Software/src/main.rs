@@ -1,7 +1,8 @@
 pub mod config;
-pub mod hardware;
 pub mod ui;
 pub mod web;
+
+pub mod hardware;
 
 use std::{sync::mpsc::channel, thread};
 
