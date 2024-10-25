@@ -2,11 +2,11 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use crate::{
     config::KNOWN_NUMBERS,
-    hardware::{self, PhoneHardware},
+    hardware::{self, audio::AudioSystem, PhoneHardware},
     network::{PhoneIncomingMessage, PhoneOutgoingMessage},
 };
 
-pub fn ui_entry(
+pub async fn ui_entry(
     network_sender: Sender<PhoneOutgoingMessage>,
     network_reciever: Receiver<PhoneIncomingMessage>,
     mute_sender: Sender<bool>,
@@ -15,6 +15,7 @@ pub fn ui_entry(
     let mut hardware = hardware::emulated::Hardware::create();
     #[cfg(feature = "real")]
     let mut hardware = hardware::physical::Hardware::create();
+    // let audio_system = AudioSystem::create();
 
     hardware.ring(false);
     hardware.enable_dialing(true);
@@ -62,6 +63,13 @@ pub fn ui_entry(
 
                 in_call = true;
                 let _ = mute_sender.send(false);
+
+                // ! REMOVE THIS LATER
+                let client = reqwest::Client::new();
+                let res = client
+                    .post("https://api.purduehackers.com/doorbell/ring")
+                    .send()
+                    .await;
 
                 println!("Calling: {}", hardware.dialed_number());
                 let _ = network_sender.send(PhoneOutgoingMessage::Dial {

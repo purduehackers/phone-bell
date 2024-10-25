@@ -69,31 +69,31 @@ pub struct AudioSystem {
     error_buffer_sender: Sender<(StreamKind, StreamError)>,
 }
 
-pub fn create() -> AudioSystem {
-    let cpal_host = cpal::default_host();
-
-    let (error_buffer_sender, error_buffer) = channel();
-
-    let mut audio_system = AudioSystem {
-        cpal_host,
-
-        input_stream: CPALStreamState::Nothing,
-        output_stream: CPALStreamState::Nothing,
-
-        incoming_audio_buffer: Option::None,
-        outgoing_audio_buffer: Option::None,
-
-        error_buffer,
-        error_buffer_sender,
-    };
-
-    audio_system.prepare_input();
-    audio_system.prepare_output();
-
-    audio_system
-}
-
 impl AudioSystem {
+    pub fn create() -> AudioSystem {
+        let cpal_host = cpal::default_host();
+
+        let (error_buffer_sender, error_buffer) = channel();
+
+        let mut audio_system = AudioSystem {
+            cpal_host,
+
+            input_stream: CPALStreamState::Nothing,
+            output_stream: CPALStreamState::Nothing,
+
+            incoming_audio_buffer: Option::None,
+            outgoing_audio_buffer: Option::None,
+
+            error_buffer,
+            error_buffer_sender,
+        };
+
+        audio_system.prepare_input();
+        audio_system.prepare_output();
+
+        audio_system
+    }
+
     pub fn prepare_input(&mut self) -> bool {
         loop {
             match &self.input_stream {

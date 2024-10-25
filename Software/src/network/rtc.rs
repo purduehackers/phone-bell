@@ -25,9 +25,12 @@ use webrtc::{
         sdp::session_description::RTCSessionDescription, RTCPeerConnection,
     },
     rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType},
-    track::track_local::{track_local_static_rtp::TrackLocalStaticRTP, TrackLocal},
+    track::track_local::{
+        track_local_static_rtp::TrackLocalStaticRTP, TrackLocal, TrackLocalWriter,
+    },
 };
-use websocket::ws::Sender as SenderTrait;
+
+use crate::hardware::audio::AudioSystem;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -552,18 +555,22 @@ async fn setup_peer_connection_audio(new_peer_connection: &RTCPeerConnection) ->
     else {
         return false;
     };
-    // tokio::spawn(async move {
-    //     let mut rtcp_buf = vec![0u8; 1500];
+    tokio::spawn(async move {
+        let mut rtcp_buf = vec![0u8; 1500];
 
-    //     while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+        // output_track.write_rtp(p);
 
-    //     println!("audio rtp_sender.read loop exit");
+        while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
 
-    //     Result::<(), ()>::Ok(())
-    // });
+        println!("audio rtp_sender.read loop exit");
+
+        Result::<(), ()>::Ok(())
+    });
 
     new_peer_connection.on_track(Box::new(move |a, b, c| {
         println!("remote track! {:?} {:?} {:?}", a, b, c);
+
+        b.read_rtcp();
 
         Box::pin(async {})
     }));
