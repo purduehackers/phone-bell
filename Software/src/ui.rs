@@ -3,9 +3,14 @@ use std::sync::mpsc::{Receiver, Sender};
 use crate::{
     config::KNOWN_NUMBERS,
     hardware::{self, PhoneHardware},
+    network::{PhoneIncomingMessage, PhoneOutgoingMessage},
 };
 
-pub fn ui_entry(web_sender: Sender<(i32, String)>, _web_reciever: Receiver<i32>) {
+pub fn ui_entry(
+    network_sender: Sender<PhoneOutgoingMessage>,
+    network_reciever: Receiver<PhoneIncomingMessage>,
+    mute_sender: Sender<bool>,
+) {
     #[cfg(not(feature = "real"))]
     let mut hardware = hardware::emulated::Hardware::create();
     #[cfg(feature = "real")]
@@ -15,14 +20,17 @@ pub fn ui_entry(web_sender: Sender<(i32, String)>, _web_reciever: Receiver<i32>)
     hardware.enable_dialing(true);
 
     let mut in_call = false;
+    let _ = mute_sender.send(true);
     let mut last_hook_state = true;
+
+    let mut last_dialed_number = String::from("");
 
     loop {
         hardware.update();
 
         let hook_state = hardware.get_hook_state();
 
-        if !hardware.dialed_number().is_empty() {
+        if *hardware.dialed_number() != last_dialed_number && !hardware.dialed_number().is_empty() {
             let mut contains = false;
 
             for number in KNOWN_NUMBERS {
@@ -42,7 +50,7 @@ pub fn ui_entry(web_sender: Sender<(i32, String)>, _web_reciever: Receiver<i32>)
                     *hardware.dialed_number() = String::from("0");
                 }
 
-                contains = false;
+                contains = !contains;
             }
 
             if contains {
@@ -53,23 +61,29 @@ pub fn ui_entry(web_sender: Sender<(i32, String)>, _web_reciever: Receiver<i32>)
                 }
 
                 in_call = true;
+                let _ = mute_sender.send(false);
 
                 println!("Calling: {}", hardware.dialed_number());
-                let _ = web_sender.send((1, hardware.dialed_number().clone()));
-
-                hardware.dialed_number().clear();
+                let _ = network_sender.send(PhoneOutgoingMessage::Dial {
+                    number: hardware.dialed_number().clone(),
+                });
             }
         }
 
+        last_dialed_number = hardware.dialed_number().clone();
+
         if last_hook_state != hook_state {
+            let _ = network_sender.send(PhoneOutgoingMessage::Hook { state: hook_state });
+
             if hook_state {
                 if in_call {
                     in_call = false;
+                    let _ = mute_sender.send(true);
 
                     hardware.enable_dialing(true);
+                    hardware.dialed_number().clear();
 
                     println!("Call Ended.");
-                    let _ = web_sender.send((0, String::new()));
                 }
             } else if in_call {
                 hardware.ring(false);
@@ -77,5 +91,17 @@ pub fn ui_entry(web_sender: Sender<(i32, String)>, _web_reciever: Receiver<i32>)
         }
 
         last_hook_state = hook_state;
+
+        for network_message in network_reciever.try_iter() {
+            match network_message {
+                PhoneIncomingMessage::Ring { state } => {
+                    hardware.ring(state);
+                }
+                PhoneIncomingMessage::ClearDial => {
+                    hardware.dialed_number().clear();
+                    hardware.enable_dialing(true);
+                }
+            }
+        }
     }
 }

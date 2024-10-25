@@ -1,22 +1,68 @@
 pub mod config;
+pub mod network;
 pub mod ui;
-pub mod web;
 
 pub mod hardware;
 
-use std::{sync::mpsc::channel, thread};
+use std::str::FromStr;
 
-use web::web_entry;
+use network::{rtc::PhoneRTC, socket::PhoneSocket};
+
+use dotenv::dotenv;
 
 use crate::ui::ui_entry;
 
-fn main() {
-    let (web_tx, ui_rx) = channel::<i32>();
-    let (ui_tx, web_rx) = channel::<(i32, String)>();
+pub enum PhoneSide {
+    Inside,
+    Outside,
+}
 
-    thread::spawn(|| {
-        web_entry(web_tx, web_rx);
+impl FromStr for PhoneSide {
+    type Err = ();
+
+    fn from_str(input: &str) -> Result<PhoneSide, Self::Err> {
+        match input {
+            "Inside" => Ok(PhoneSide::Inside),
+            "Outside" => Ok(PhoneSide::Outside),
+            _ => Err(()),
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    dotenv().ok();
+
+    let phone_side = PhoneSide::from_str(&std::env::var("PHONE_SIDE").unwrap()).unwrap();
+
+    let (mut socket, outgoing_messages, incoming_messages) = PhoneSocket::create(phone_side);
+
+    let (mut rtc, mute_sender) = PhoneRTC::create();
+
+    let mut ui_task = tokio::spawn(async {
+        ui_entry(outgoing_messages, incoming_messages, mute_sender);
     });
 
-    ui_entry(ui_tx, ui_rx);
+    let mut websocket_task = tokio::spawn(async move {
+        socket.run();
+    });
+
+    let mut webrtc_task = tokio::spawn(async move {
+        rtc.run().await;
+    });
+
+    tokio::select! {
+        _rv_a = (&mut ui_task) => {
+            websocket_task.abort();
+            webrtc_task.abort();
+        }
+        _rv_b = (&mut websocket_task) => {
+            ui_task.abort();
+            webrtc_task.abort();
+        },
+        _rv_c = (&mut webrtc_task) => {
+            ui_task.abort();
+            websocket_task.abort();
+        }
+    }
 }

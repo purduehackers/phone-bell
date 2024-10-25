@@ -66,7 +66,6 @@ impl PhoneHardware for Hardware {
         };
 
         Hardware {
-            // TODO: Add audio infrastructure
             last_update_instant: Instant::now(),
 
             gpio_read_timer: Duration::ZERO,

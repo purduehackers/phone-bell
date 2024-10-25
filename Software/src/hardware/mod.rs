@@ -1,3 +1,4 @@
+pub mod audio;
 #[cfg(not(feature = "real"))]
 pub mod emulated;
 #[cfg(feature = "real")]

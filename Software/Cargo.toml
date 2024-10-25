@@ -4,12 +4,23 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# common
+uuid = { version = "1.11.0", features = ["serde"] }
+websocket = "0.27.1"
+webrtc = "0.11.0"
+serde = "1.0.210"
+serde_json = "1.0.128"
+dotenv = "0.15.0"
+
 # emulated
 druid = { version = "0.8.3", features = ["image", "png"], optional = true }
 
 # real
 rppal = { version = "0.17.1", features = ["hal"], optional = true }
 debouncr = { version = "0.2.2", optional = true }
+tokio = "1.40.0"
+cpal = "0.15.3"
+opus = "0.3.0"
 
 [features]
 default = ["dep:druid"]
