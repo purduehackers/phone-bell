@@ -40,10 +40,6 @@ async fn main() {
 
     let (mut rtc, mute_sender) = PhoneRTC::create();
 
-    let mut ui_task = tokio::spawn(async {
-        ui_entry(outgoing_messages, incoming_messages, mute_sender).await;
-    });
-
     let mut websocket_task = tokio::spawn(async move {
         socket.run();
     });
@@ -52,18 +48,19 @@ async fn main() {
         rtc.run().await;
     });
 
-    tokio::select! {
-        _rv_a = (&mut ui_task) => {
-            websocket_task.abort();
-            webrtc_task.abort();
-        }
-        _rv_b = (&mut websocket_task) => {
-            ui_task.abort();
-            webrtc_task.abort();
-        },
-        _rv_c = (&mut webrtc_task) => {
-            ui_task.abort();
-            websocket_task.abort();
-        }
-    }
+    ui_entry(outgoing_messages, incoming_messages, mute_sender).await;
+    // tokio::select! {
+    //     _rv_a = (&mut ui_task) => {
+    //         websocket_task.abort();
+    //         webrtc_task.abort();
+    //     }
+    //     _rv_b = (&mut websocket_task) => {
+    //         ui_task.abort();
+    //         webrtc_task.abort();
+    //     },
+    //     _rv_c = (&mut webrtc_task) => {
+    //         ui_task.abort();
+    //         websocket_task.abort();
+    //     }
+    // }
 }

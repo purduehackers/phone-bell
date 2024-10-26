@@ -30,7 +30,7 @@ use webrtc::{
     },
 };
 
-use crate::hardware::audio::AudioSystem;
+use crate::hardware::audio::{AudioSystem, AudioSystemMarshaller};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -156,6 +156,8 @@ impl PhoneRTC {
             channel::<(RTCIceCandidate, Uuid)>();
         let (connection_change_channel_sender, connection_change_channel_receiver) =
             channel::<(RTCPeerConnectionState, Uuid)>();
+
+        let audio_system = AudioSystemMarshaller::new();
 
         let (signaling_message_sender, signaling_message_receiver) = channel::<SignalingMessage>();
         let (signaling_pong_sender, signaling_pong_receiver) = channel::<Vec<u8>>();

@@ -1,4 +1,7 @@
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::{
+    sync::mpsc::{channel, Receiver, Sender, TryRecvError},
+    thread,
+};
 
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
@@ -42,9 +45,11 @@ enum CPALStreamState {
     DeviceConfigStream(Device, SupportedStreamConfig, Stream),
 }
 
+#[derive(Debug)]
 pub enum StreamReadError {
     NoStream,
 }
+#[derive(Debug)]
 pub enum StreamWriteError {
     NoStream,
     WriteFailed,
@@ -53,6 +58,43 @@ pub enum StreamWriteError {
 pub enum StreamKind {
     Incoming,
     Outgoing,
+}
+
+pub struct AudioSystemMarshaller {
+    from_input: Receiver<Vec<f32>>,
+    to_output: Sender<Vec<f32>>,
+}
+
+impl AudioSystemMarshaller {
+    pub fn new() -> Self {
+        let (input, from_input) = channel();
+        let (to_output, output) = channel::<Vec<f32>>();
+        thread::spawn(move || {
+            let mut audio_system = AudioSystem::create();
+
+            loop {
+                if let Ok(s) = audio_system.read_next_samples() {
+                    input.send(s).unwrap();
+                }
+                if let Ok(r) = output.try_recv() {
+                    audio_system.write_next_samples(r.as_slice()).unwrap();
+                }
+            }
+        });
+
+        Self {
+            from_input,
+            to_output,
+        }
+    }
+
+    pub fn send_to_speaker(&self, data: Vec<f32>) {
+        self.to_output.send(data).unwrap();
+    }
+
+    pub fn try_receive_from_mic(&self) -> Result<Vec<f32>, TryRecvError> {
+        self.from_input.try_recv()
+    }
 }
 
 pub struct AudioSystem {

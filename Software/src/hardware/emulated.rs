@@ -178,40 +178,56 @@ pub struct Hardware {
 
     hook_state: bool,
     hook_state_receiver: Receiver<bool>,
+    launcher: Option<force_send_sync::Send<Launcher>>,
+}
+
+pub struct Launcher {
+    launcher: AppLauncher<UIState>,
+    state: UIState,
+}
+
+impl Launcher {
+    pub fn go(self) {
+        let _ = self.launcher.log_to_console().launch(self.state);
+    }
+}
+
+impl Hardware {
+    pub fn take_gui(&mut self) -> Launcher {
+        self.launcher.take().expect("whered the gui go???").unwrap()
+    }
 }
 
 impl PhoneHardware for Hardware {
-    fn create() -> impl PhoneHardware {
+    fn create() -> Self {
         let (sender, receiver) = channel::<ExtEventSink>();
 
         let (hook_state_sender, hook_state_receiver) = channel::<bool>();
         let (dial_sender, dial_receiver) = channel::<u8>();
 
-        thread::spawn(move || {
-            let main_window = WindowDesc::new(ui_builder())
-                .title("Phone Bell")
-                .window_size((300., 500.))
-                .resizable(false);
+        let main_window = WindowDesc::new(ui_builder())
+            .title("Phone Bell")
+            .window_size((300., 500.))
+            .resizable(false);
 
-            let launcher = AppLauncher::with_window(main_window);
+        let launcher = AppLauncher::with_window(main_window);
 
-            let event_sink = launcher.get_external_handle();
+        let event_sink = launcher.get_external_handle();
 
-            let _ = sender.send(event_sink);
+        let _ = sender.send(event_sink);
 
-            let state = UIState {
-                dialing_enabled: true,
-                dialed_number: String::from(""),
-                dial_sender,
+        let state = UIState {
+            dialing_enabled: true,
+            dialed_number: String::from(""),
+            dial_sender,
 
-                hook_state: true,
-                hook_state_sender,
+            hook_state: true,
+            hook_state_sender,
 
-                ringing: false,
-            };
+            ringing: false,
+        };
 
-            let _ = launcher.log_to_console().launch(state);
-        });
+        // let _ = launcher.log_to_console().launch(state);
 
         Hardware {
             event_sink: receiver.recv().unwrap(),
@@ -222,6 +238,7 @@ impl PhoneHardware for Hardware {
 
             hook_state: true,
             hook_state_receiver,
+            launcher: Some(unsafe { force_send_sync::Send::new(Launcher { launcher, state }) }),
         }
     }
 
