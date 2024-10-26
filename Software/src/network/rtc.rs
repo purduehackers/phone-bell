@@ -7,6 +7,7 @@ use std::{
     thread,
 };
 
+use opus::{Channels, Decoder, Encoder};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use webrtc::{
@@ -24,6 +25,7 @@ use webrtc::{
         configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
         sdp::session_description::RTCSessionDescription, RTCPeerConnection,
     },
+    rtp::{packet::Packet, packetizer::new_packetizer},
     rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType},
     track::track_local::{
         track_local_static_rtp::TrackLocalStaticRTP, TrackLocal, TrackLocalWriter,
@@ -272,8 +274,11 @@ impl PhoneRTC {
                                                 break 'message_iterate;
                                             };
 
-                                            if !setup_peer_connection_audio(&new_peer_connection)
-                                                .await
+                                            if !setup_peer_connection_audio(
+                                                &new_peer_connection,
+                                                &audio_system,
+                                            )
+                                            .await
                                             {
                                                 break 'message_iterate;
                                             }
@@ -358,8 +363,11 @@ impl PhoneRTC {
                                                 break 'message_iterate;
                                             };
 
-                                            if !setup_peer_connection_audio(&new_peer_connection)
-                                                .await
+                                            if !setup_peer_connection_audio(
+                                                &new_peer_connection,
+                                                &audio_system,
+                                            )
+                                            .await
                                             {
                                                 break 'message_iterate;
                                             }
@@ -523,7 +531,10 @@ impl PhoneRTC {
     }
 }
 
-async fn setup_peer_connection_audio(new_peer_connection: &RTCPeerConnection) -> bool {
+async fn setup_peer_connection_audio(
+    new_peer_connection: &RTCPeerConnection,
+    audio_system: &AudioSystemMarshaller,
+) -> bool {
     // TODO:
     // if (this.stream) {
     // 	for (let track of this.stream.getAudioTracks()) {
@@ -542,16 +553,26 @@ async fn setup_peer_connection_audio(new_peer_connection: &RTCPeerConnection) ->
     // 	this.audioStreams[target] = newAudioElement;
     // });
 
+    // TODO: make this take channel and sample rates from the audio subsystem
+    let Ok(encoder) = Encoder::new(48000, Channels::Stereo, opus::Application::Voip) else {
+        return false;
+    };
+    let Ok(decoder) = Decoder::new(48000, Channels::Stereo) else {
+        return false;
+    };
+
     let output_track = Arc::new(TrackLocalStaticRTP::new(
         RTCRtpCodecCapability {
             mime_type: MIME_TYPE_OPUS.to_owned(),
+            clock_rate: 48000,
+            channels: 2,
             ..Default::default()
         },
         "track-audio".to_string(),
         "webrtc-rs".to_owned(),
     ));
 
-    let Ok(rtp_sender) = new_peer_connection
+    let Ok(rtcp_sender) = new_peer_connection
         .add_track(Arc::clone(&output_track) as Arc<dyn TrackLocal + Send + Sync>)
         .await
     else {
@@ -561,8 +582,29 @@ async fn setup_peer_connection_audio(new_peer_connection: &RTCPeerConnection) ->
         let mut rtcp_buf = vec![0u8; 1500];
 
         // output_track.write_rtp(p);
+        //
+        let rtp_sender = rtcp_sender.transport();
 
-        while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+        tokio::spawn(async move {
+            let packetizer =
+                new_packetizer(mtu, payload_type, ssrc, payloader, sequencer, clock_rate);
+
+            loop {
+                let Ok(next_audio_frames) = audio_system.try_receive_from_mic() else {
+                    continue;
+                };
+
+                let Ok(next_audio_frames) =
+                    encoder.encode_vec_float(next_audio_frames.as_slice(), next_audio_frames.len())
+                else {
+                    continue;
+                };
+
+                output_track.write_rtp().await;
+            }
+        });
+
+        while let Ok((_, _)) = rtcp_sender.read(&mut rtcp_buf).await {}
 
         println!("audio rtp_sender.read loop exit");
 
