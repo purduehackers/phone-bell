@@ -1,7 +1,4 @@
-use std::{
-    sync::mpsc::{channel, Receiver, Sender},
-    thread,
-};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::hardware::PhoneHardware;
 

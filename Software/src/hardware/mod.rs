@@ -5,7 +5,7 @@ pub mod emulated;
 pub mod physical;
 
 pub trait PhoneHardware {
-    fn create() -> impl PhoneHardware;
+    fn create() -> Self;
 
     fn update(&mut self);
 

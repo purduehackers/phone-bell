@@ -66,7 +66,7 @@ pub struct AudioSystemMarshaller {
 }
 
 impl AudioSystemMarshaller {
-    pub fn new() -> Self {
+    pub fn create() -> Self {
         let (input, from_input) = channel();
         let (to_output, output) = channel::<Vec<f32>>();
         thread::spawn(move || {

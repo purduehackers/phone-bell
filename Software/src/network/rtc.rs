@@ -159,7 +159,7 @@ impl PhoneRTC {
         let (connection_change_channel_sender, connection_change_channel_receiver) =
             channel::<(RTCPeerConnectionState, Uuid)>();
 
-        let audio_system = AudioSystemMarshaller::new();
+        // let audio_system = AudioSystemMarshaller::create();
 
         let (signaling_message_sender, signaling_message_receiver) = channel::<SignalingMessage>();
         let (signaling_pong_sender, signaling_pong_receiver) = channel::<Vec<u8>>();
@@ -276,7 +276,7 @@ impl PhoneRTC {
 
                                             if !setup_peer_connection_audio(
                                                 &new_peer_connection,
-                                                &audio_system,
+                                                // &audio_system,
                                             )
                                             .await
                                             {
@@ -365,7 +365,7 @@ impl PhoneRTC {
 
                                             if !setup_peer_connection_audio(
                                                 &new_peer_connection,
-                                                &audio_system,
+                                                // &audio_system,
                                             )
                                             .await
                                             {
@@ -533,7 +533,7 @@ impl PhoneRTC {
 
 async fn setup_peer_connection_audio(
     new_peer_connection: &RTCPeerConnection,
-    audio_system: &AudioSystemMarshaller,
+    // audio_system: &AudioSystemMarshaller,
 ) -> bool {
     // TODO:
     // if (this.stream) {
@@ -578,38 +578,38 @@ async fn setup_peer_connection_audio(
     else {
         return false;
     };
-    tokio::spawn(async move {
-        let mut rtcp_buf = vec![0u8; 1500];
+    // tokio::spawn(async move {
+    //     let mut rtcp_buf = vec![0u8; 1500];
 
-        // output_track.write_rtp(p);
-        //
-        let rtp_sender = rtcp_sender.transport();
+    //     // output_track.write_rtp(p);
+    //     //
+    //     let rtp_sender = rtcp_sender.transport();
 
-        tokio::spawn(async move {
-            let packetizer =
-                new_packetizer(mtu, payload_type, ssrc, payloader, sequencer, clock_rate);
+    //     tokio::spawn(async move {
+    //         let packetizer =
+    //             new_packetizer(mtu, payload_type, ssrc, payloader, sequencer, clock_rate);
 
-            loop {
-                let Ok(next_audio_frames) = audio_system.try_receive_from_mic() else {
-                    continue;
-                };
+    //         loop {
+    //             let Ok(next_audio_frames) = audio_system.try_receive_from_mic() else {
+    //                 continue;
+    //             };
 
-                let Ok(next_audio_frames) =
-                    encoder.encode_vec_float(next_audio_frames.as_slice(), next_audio_frames.len())
-                else {
-                    continue;
-                };
+    //             let Ok(next_audio_frames) =
+    //                 encoder.encode_vec_float(next_audio_frames.as_slice(), next_audio_frames.len())
+    //             else {
+    //                 continue;
+    //             };
 
-                output_track.write_rtp().await;
-            }
-        });
+    //             output_track.write_rtp().await;
+    //         }
+    //     });
 
-        while let Ok((_, _)) = rtcp_sender.read(&mut rtcp_buf).await {}
+    //     while let Ok((_, _)) = rtcp_sender.read(&mut rtcp_buf).await {}
 
-        println!("audio rtp_sender.read loop exit");
+    //     println!("audio rtp_sender.read loop exit");
 
-        Result::<(), ()>::Ok(())
-    });
+    //     Result::<(), ()>::Ok(())
+    // });
 
     new_peer_connection.on_track(Box::new(move |a, b, c| {
         println!("remote track! {:?} {:?} {:?}", a, b, c);

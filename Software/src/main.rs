@@ -4,9 +4,8 @@ pub mod ui;
 
 pub mod hardware;
 
-use std::{str::FromStr, thread};
+use std::str::FromStr;
 
-use hardware::audio::AudioSystem;
 use network::{rtc::PhoneRTC, socket::PhoneSocket};
 
 use dotenv::dotenv;
@@ -40,27 +39,16 @@ async fn main() {
 
     let (mut rtc, mute_sender) = PhoneRTC::create();
 
-    let mut websocket_task = tokio::spawn(async move {
+    let websocket_task = tokio::spawn(async move {
         socket.run();
     });
 
-    let mut webrtc_task = tokio::spawn(async move {
+    let webrtc_task = tokio::spawn(async move {
         rtc.run().await;
     });
 
     ui_entry(outgoing_messages, incoming_messages, mute_sender).await;
-    // tokio::select! {
-    //     _rv_a = (&mut ui_task) => {
-    //         websocket_task.abort();
-    //         webrtc_task.abort();
-    //     }
-    //     _rv_b = (&mut websocket_task) => {
-    //         ui_task.abort();
-    //         webrtc_task.abort();
-    //     },
-    //     _rv_c = (&mut webrtc_task) => {
-    //         ui_task.abort();
-    //         websocket_task.abort();
-    //     }
-    // }
+
+    websocket_task.abort();
+    webrtc_task.abort();
 }

@@ -1,13 +1,14 @@
 use std::{
+    io::Cursor,
     sync::mpsc::{Receiver, Sender},
-    thread,
 };
 
 use crate::{
     config::KNOWN_NUMBERS,
-    hardware::{self, audio::AudioSystem, PhoneHardware},
+    hardware::{self, PhoneHardware},
     network::{PhoneIncomingMessage, PhoneOutgoingMessage},
 };
+use rodio::{Decoder, OutputStream, Sink, Source};
 
 pub async fn ui_entry(
     network_sender: Sender<PhoneOutgoingMessage>,
@@ -22,7 +23,10 @@ pub async fn ui_entry(
     };
     #[cfg(feature = "real")]
     let mut hardware = hardware::physical::Hardware::create();
-    // let audio_system = AudioSystem::create();
+
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+
+    let sink: Sink = Sink::try_new(&stream_handle).unwrap();
 
     hardware.ring(false);
     hardware.enable_dialing(true);
@@ -33,6 +37,7 @@ pub async fn ui_entry(
 
     let mut last_dialed_number = String::from("");
 
+    #[allow(unused_variables)]
     let hnd = tokio::spawn(async move {
         loop {
             hardware.update();
@@ -67,19 +72,29 @@ pub async fn ui_entry(
                 if contains {
                     hardware.enable_dialing(false);
 
+                    in_call = true;
+
                     if hook_state {
                         hardware.ring(true);
+                    } else {
+                        let _ = mute_sender.send(false);
+
+                        // ! REMOVE THIS LATER
+                        let source =
+                            Decoder::new(Cursor::new(include_bytes!("../assets/doorbell.flac")))
+                                .unwrap();
+
+                        sink.clear();
+                        sink.append(source.convert_samples::<f32>());
+                        sink.play();
+
+                        // ! REMOVE THIS LATER
+                        let client = reqwest::Client::new();
+                        let _ = client
+                            .post("https://api.purduehackers.com/doorbell/ring")
+                            .send()
+                            .await;
                     }
-
-                    in_call = true;
-                    let _ = mute_sender.send(false);
-
-                    // ! REMOVE THIS LATER
-                    let client = reqwest::Client::new();
-                    let res = client
-                        .post("https://api.purduehackers.com/doorbell/ring")
-                        .send()
-                        .await;
 
                     println!("Calling: {}", hardware.dialed_number());
                     let _ = network_sender.send(PhoneOutgoingMessage::Dial {
@@ -94,6 +109,8 @@ pub async fn ui_entry(
                 let _ = network_sender.send(PhoneOutgoingMessage::Hook { state: hook_state });
 
                 if hook_state {
+                    sink.clear();
+
                     if in_call {
                         in_call = false;
                         let _ = mute_sender.send(true);
@@ -105,6 +122,32 @@ pub async fn ui_entry(
                     }
                 } else if in_call {
                     hardware.ring(false);
+
+                    let _ = mute_sender.send(false);
+
+                    // ! REMOVE THIS LATER
+                    let source =
+                        Decoder::new(Cursor::new(include_bytes!("../assets/doorbell.flac")))
+                            .unwrap();
+
+                    sink.clear();
+                    sink.append(source.convert_samples::<f32>());
+                    sink.play();
+
+                    // ! REMOVE THIS LATER
+                    let client = reqwest::Client::new();
+                    let _ = client
+                        .post("https://api.purduehackers.com/doorbell/ring")
+                        .send()
+                        .await;
+                } else {
+                    let source =
+                        Decoder::new_looped(Cursor::new(include_bytes!("../assets/dialtone.flac")))
+                            .unwrap();
+
+                    sink.clear();
+                    sink.append(source.convert_samples::<f32>());
+                    sink.play();
                 }
             }
 
@@ -130,6 +173,6 @@ pub async fn ui_entry(
     }
     #[cfg(not(feature = "real"))]
     {
-        let _ = ui.go();
+        ui.go();
     }
 }
