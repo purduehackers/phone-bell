@@ -37,7 +37,7 @@ pub async fn ui_entry(
 
     let mut last_dialed_number = String::from("");
 
-    let mut silent_ring = false;
+    let mut test_ring = false;
 
     #[allow(unused_variables)]
     let hnd = tokio::spawn(async move {
@@ -81,18 +81,19 @@ pub async fn ui_entry(
                         number: hardware.dialed_number().clone(),
                     });
 
-                    silent_ring = hardware.dialed_number() == "7";
+                    test_ring = hardware.dialed_number() == "7";
 
                     if hook_state {
                         hardware.ring(true);
                     } else {
                         let _ = mute_sender.send(false);
 
-                        if !silent_ring {
+                        if !test_ring {
                             // ! REMOVE THIS LATER
-                            let source =
-                                Decoder::new(Cursor::new(include_bytes!("../assets/doorbell.flac")))
-                                    .unwrap();
+                            let source = Decoder::new(Cursor::new(include_bytes!(
+                                "../assets/doorbell.flac"
+                            )))
+                            .unwrap();
 
                             sink.clear();
                             sink.append(source.convert_samples::<f32>());
@@ -104,6 +105,15 @@ pub async fn ui_entry(
                                 .post("https://api.purduehackers.com/doorbell/ring")
                                 .send()
                                 .await;
+                        } else {
+                            let source = Decoder::new(Cursor::new(include_bytes!(
+                                "../assets/dial_test.flac"
+                            )))
+                            .unwrap();
+
+                            sink.clear();
+                            sink.append(source.convert_samples::<f32>());
+                            sink.play();
                         }
                     }
                 }
@@ -131,7 +141,7 @@ pub async fn ui_entry(
 
                     let _ = mute_sender.send(false);
 
-                    if !silent_ring {
+                    if !test_ring {
                         // ! REMOVE THIS LATER
                         let source =
                             Decoder::new(Cursor::new(include_bytes!("../assets/doorbell.flac")))
@@ -147,6 +157,14 @@ pub async fn ui_entry(
                             .post("https://api.purduehackers.com/doorbell/ring")
                             .send()
                             .await;
+                    } else {
+                        let source =
+                            Decoder::new(Cursor::new(include_bytes!("../assets/dial_test.flac")))
+                                .unwrap();
+
+                        sink.clear();
+                        sink.append(source.convert_samples::<f32>());
+                        sink.play();
                     }
                 } else {
                     let source =
