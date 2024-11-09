@@ -6,8 +6,9 @@ pub const DIAL_PULSE_PIN: u8 = 27;
 pub const BELL_SOLENOID_FORWARD_PIN: u8 = 24;
 pub const BELL_SOLENOID_REVERSE_PIN: u8 = 23;
 
-pub const KNOWN_NUMBERS: [&str; 6] = [
+pub const KNOWN_NUMBERS: [&str; 7] = [
     "0",                                               // Operator
+    "7",                                               // Test Number
     "349",                                             // "Fiz"
     "4225",                                            // "Hack"
     "34643664",                                        // "Dingdong",
