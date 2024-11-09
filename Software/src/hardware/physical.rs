@@ -40,7 +40,7 @@ pub struct Hardware {
 }
 
 impl PhoneHardware for Hardware {
-    fn create() -> impl PhoneHardware {
+    fn create() -> Self {
         let Ok(gpio) = Gpio::new() else {
             panic!("Failed to initialize GPIO")
         };
