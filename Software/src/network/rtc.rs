@@ -336,13 +336,6 @@ impl PhoneRTC {
                                             };
 
                                             let Ok(_) = new_peer_connection
-                                                .set_remote_description(offer)
-                                                .await
-                                            else {
-                                                break 'message_iterate;
-                                            };
-
-                                            let Ok(_) = new_peer_connection
                                                 .add_transceiver_from_kind(
                                                     RTPCodecType::Audio,
                                                     None,
@@ -362,6 +355,13 @@ impl PhoneRTC {
                                             {
                                                 break 'message_iterate;
                                             }
+
+                                            let Ok(_) = new_peer_connection
+                                                .set_remote_description(offer)
+                                                .await
+                                            else {
+                                                break 'message_iterate;
+                                            };
 
                                             let Ok(answer) =
                                                 &(new_peer_connection.create_answer(None).await)
