@@ -15,6 +15,7 @@ tokio = "1.40.0"
 cpal = "0.15.3"
 opus = "0.3.0"
 reqwest = "0.12.8"
+bytes = "1.9.0"
 
 # emulated
 druid = { version = "0.8.3", features = ["image", "png"], optional = true }

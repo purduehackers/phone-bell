@@ -1,14 +1,17 @@
 use std::{
     collections::HashMap,
     sync::{
-        mpsc::{channel, Receiver, Sender},
+        atomic::{AtomicI64, Ordering},
+        mpsc::{self},
         Arc,
     },
     thread,
 };
 
+use bytes::Bytes;
 use opus::{Channels, Decoder, Encoder};
 use serde::{Deserialize, Serialize};
+use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 use webrtc::{
     api::{
@@ -25,14 +28,18 @@ use webrtc::{
         configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
         sdp::session_description::RTCSessionDescription, RTCPeerConnection,
     },
-    rtp::{packet::Packet, packetizer::new_packetizer},
+    rtp::{
+        codecs::opus::OpusPayloader,
+        packetizer::{new_packetizer, Packetizer},
+        sequence::new_random_sequencer,
+    },
     rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType},
     track::track_local::{
         track_local_static_rtp::TrackLocalStaticRTP, TrackLocal, TrackLocalWriter,
     },
 };
 
-use crate::hardware::audio::{AudioSystem, AudioSystemMarshaller};
+use crate::{config::SAMPLE_RATE, hardware::audio::MixerMessage};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -70,16 +77,20 @@ pub struct PhoneRTC {
         >,
     >,
     webrtc_api: API,
-    mute_receiver: Receiver<bool>,
+    mute_receiver: mpsc::Receiver<bool>,
     peer_connections: HashMap<Uuid, RTCPeerConnection>,
-    audio_streams: HashMap<Uuid, Arc<TrackLocalStaticRTP>>,
+    mixer_out: mpsc::Sender<MixerMessage>,
+    mic_in: broadcast::Sender<Vec<f32>>,
     id: Uuid,
     muted: bool,
 }
 
 impl PhoneRTC {
-    pub fn create() -> (PhoneRTC, Sender<bool>) {
-        let (mute_sender, mute_receiver) = channel();
+    pub fn create(
+        mixer_out: mpsc::Sender<MixerMessage>,
+        mic_in: broadcast::Sender<Vec<f32>>,
+    ) -> (PhoneRTC, mpsc::Sender<bool>) {
+        let (mute_sender, mute_receiver) = mpsc::channel();
 
         let mut m = MediaEngine::default();
 
@@ -110,7 +121,8 @@ impl PhoneRTC {
             webrtc_api,
             mute_receiver,
             peer_connections: HashMap::new(),
-            audio_streams: HashMap::new(),
+            mixer_out,
+            mic_in,
             id: Uuid::new_v4(),
             muted: true,
         };
@@ -155,14 +167,15 @@ impl PhoneRTC {
 
     pub async fn run(&mut self) {
         let (ice_candidate_channel_sender, ice_candidate_channel_receiver) =
-            channel::<(RTCIceCandidate, Uuid)>();
+            mpsc::channel::<(RTCIceCandidate, Uuid)>();
         let (connection_change_channel_sender, connection_change_channel_receiver) =
-            channel::<(RTCPeerConnectionState, Uuid)>();
+            mpsc::channel::<(RTCPeerConnectionState, Uuid)>();
 
-        // let audio_system = AudioSystemMarshaller::create();
+        let (signaling_message_sender, signaling_message_receiver) =
+            mpsc::channel::<SignalingMessage>();
+        let (signaling_pong_sender, signaling_pong_receiver) = mpsc::channel::<Vec<u8>>();
 
-        let (signaling_message_sender, signaling_message_receiver) = channel::<SignalingMessage>();
-        let (signaling_pong_sender, signaling_pong_receiver) = channel::<Vec<u8>>();
+        let (mute_sender, mute_receiver) = watch::channel(true);
 
         loop {
             if self.signaling_socket.is_none() {
@@ -172,26 +185,13 @@ impl PhoneRTC {
             if let Ok(mute) = self.mute_receiver.try_recv() {
                 self.muted = mute;
 
-                // TODO:
-                // if (this.stream) {
-                // 	for (let track of this.stream.getAudioTracks()) {
-                // 		track.enabled = !state;
-                // 	}
-                // }
-
-                // for (let audioStream of Object.values(this.audioStreams)) {
-                // 	audioStream.muted = state;
-                // }
+                let _ = mute_sender.send(mute);
             }
 
             if let Ok((connection_state, from)) = connection_change_channel_receiver.try_recv() {
                 if connection_state == RTCPeerConnectionState::Disconnected
                     || connection_state == RTCPeerConnectionState::Failed
                 {
-                    if let Some(_) = self.audio_streams.remove(&from) {
-                        // TODO: Clean up audio
-                    }
-
                     if let Some(peer_connection) = self.peer_connections.remove(&from) {
                         let _ = peer_connection.close().await;
                     }
@@ -261,6 +261,17 @@ impl PhoneRTC {
                                                 break 'message_iterate;
                                             };
 
+                                            if !setup_peer_connection_audio(
+                                                &self.mixer_out,
+                                                &self.mic_in,
+                                                &new_peer_connection,
+                                                &mute_receiver,
+                                            )
+                                            .await
+                                            {
+                                                break 'message_iterate;
+                                            }
+
                                             let Ok(offer) =
                                                 &(new_peer_connection.create_offer(None).await)
                                             else {
@@ -273,15 +284,6 @@ impl PhoneRTC {
                                             else {
                                                 break 'message_iterate;
                                             };
-
-                                            if !setup_peer_connection_audio(
-                                                &new_peer_connection,
-                                                // &audio_system,
-                                            )
-                                            .await
-                                            {
-                                                break 'message_iterate;
-                                            }
 
                                             let new_connection_change_channel_sender =
                                                 connection_change_channel_sender.clone();
@@ -350,6 +352,17 @@ impl PhoneRTC {
                                                 break 'message_iterate;
                                             };
 
+                                            if !setup_peer_connection_audio(
+                                                &self.mixer_out,
+                                                &self.mic_in,
+                                                &new_peer_connection,
+                                                &mute_receiver,
+                                            )
+                                            .await
+                                            {
+                                                break 'message_iterate;
+                                            }
+
                                             let Ok(answer) =
                                                 &(new_peer_connection.create_answer(None).await)
                                             else {
@@ -362,15 +375,6 @@ impl PhoneRTC {
                                             else {
                                                 break 'message_iterate;
                                             };
-
-                                            if !setup_peer_connection_audio(
-                                                &new_peer_connection,
-                                                // &audio_system,
-                                            )
-                                            .await
-                                            {
-                                                break 'message_iterate;
-                                            }
 
                                             let new_ice_candidate_channel_sender =
                                                 ice_candidate_channel_sender.clone();
@@ -466,10 +470,6 @@ impl PhoneRTC {
                                         if from != self.id {
                                             println!("Leave from: {}", from);
 
-                                            if let Some(_) = self.audio_streams.remove(&from) {
-                                                // TODO: Clean up audio
-                                            }
-
                                             if let Some(peer_connection) =
                                                 self.peer_connections.remove(&from)
                                             {
@@ -487,8 +487,6 @@ impl PhoneRTC {
                                 break 'message_iterate;
                             }
                             websocket::OwnedMessage::Ping(data) => {
-                                // let _ =
-                                //     (*signaling_socket).send_message(&websocket::Message::pong(data));
                                 let _ = signaling_pong_sender.send(data);
                             }
                             websocket::OwnedMessage::Pong(_) => {}
@@ -531,41 +529,23 @@ impl PhoneRTC {
     }
 }
 
+static CHANNEL_INDEXER: AtomicI64 = AtomicI64::new(0);
+
 async fn setup_peer_connection_audio(
+    mixer_out: &mpsc::Sender<MixerMessage>,
+    mic_in: &broadcast::Sender<Vec<f32>>,
     new_peer_connection: &RTCPeerConnection,
-    // audio_system: &AudioSystemMarshaller,
+    mute_receiver: &watch::Receiver<bool>,
 ) -> bool {
-    // TODO:
-    // if (this.stream) {
-    // 	for (let track of this.stream.getAudioTracks()) {
-    // 		peerConnection.addTrack(track, this.stream);
-    // 	}
-    // }
+    const SAMPLE_RATE_PER_MILLISECOND: f32 = (SAMPLE_RATE / 1000) as f32;
 
-    // peerConnection.addEventListener("track", async (event) => {
-    // 	const [remoteStream] = event.streams;
-
-    // 	let newAudioElement = document.createElement("audio");
-
-    // 	newAudioElement.srcObject = remoteStream;
-    // 	newAudioElement.autoplay = true;
-
-    // 	this.audioStreams[target] = newAudioElement;
-    // });
-
-    // TODO: make this take channel and sample rates from the audio subsystem
-    let Ok(encoder) = Encoder::new(48000, Channels::Stereo, opus::Application::Voip) else {
-        return false;
-    };
-    let Ok(decoder) = Decoder::new(48000, Channels::Stereo) else {
-        return false;
-    };
+    const FRAME_LENGTH_1200: usize = (SAMPLE_RATE_PER_MILLISECOND * 60.0) as usize;
 
     let output_track = Arc::new(TrackLocalStaticRTP::new(
         RTCRtpCodecCapability {
             mime_type: MIME_TYPE_OPUS.to_owned(),
-            clock_rate: 48000,
-            channels: 2,
+            clock_rate: SAMPLE_RATE,
+            channels: 1,
             ..Default::default()
         },
         "track-audio".to_string(),
@@ -578,43 +558,130 @@ async fn setup_peer_connection_audio(
     else {
         return false;
     };
-    // tokio::spawn(async move {
-    //     let mut rtcp_buf = vec![0u8; 1500];
 
-    //     // output_track.write_rtp(p);
-    //     //
-    //     let rtp_sender = rtcp_sender.transport();
+    let mut mic_receiver = mic_in.subscribe();
+    let mute_receiver_encoder = mute_receiver.clone();
 
-    //     tokio::spawn(async move {
-    //         let packetizer =
-    //             new_packetizer(mtu, payload_type, ssrc, payloader, sequencer, clock_rate);
+    tokio::spawn(async move {
+        let Ok(mut encoder) = Encoder::new(SAMPLE_RATE, Channels::Mono, opus::Application::Voip)
+        else {
+            return Err(());
+        };
 
-    //         loop {
-    //             let Ok(next_audio_frames) = audio_system.try_receive_from_mic() else {
-    //                 continue;
-    //             };
+        let mut mute_receiver_encoder = mute_receiver_encoder.clone();
 
-    //             let Ok(next_audio_frames) =
-    //                 encoder.encode_vec_float(next_audio_frames.as_slice(), next_audio_frames.len())
-    //             else {
-    //                 continue;
-    //             };
+        let audio_send_task = tokio::spawn(async move {
+            let payloader = OpusPayloader;
+            let sequencer = new_random_sequencer();
+            let mut packetizer = new_packetizer(
+                1276,
+                120,
+                69,
+                Box::new(payloader),
+                Box::new(sequencer),
+                SAMPLE_RATE,
+            );
 
-    //             output_track.write_rtp().await;
-    //         }
-    //     });
+            loop {
+                let Ok(next_audio_frames) = mic_receiver.recv().await else {
+                    continue;
+                };
 
-    //     while let Ok((_, _)) = rtcp_sender.read(&mut rtcp_buf).await {}
+                let mute = *mute_receiver_encoder.borrow_and_update();
 
-    //     println!("audio rtp_sender.read loop exit");
+                let next_audio_frames_processed = next_audio_frames
+                    .into_iter()
+                    .map(|sample| if mute { 0.0 } else { sample })
+                    .collect::<Vec<f32>>();
 
-    //     Result::<(), ()>::Ok(())
-    // });
+                let encode_result = encoder.encode_vec_float(
+                    next_audio_frames_processed.as_slice(),
+                    next_audio_frames_processed.len(),
+                );
 
-    new_peer_connection.on_track(Box::new(move |a, b, c| {
-        println!("remote track! {:?} {:?} {:?}", a, b, c);
+                let Ok(next_audio_frames) = encode_result else {
+                    continue;
+                };
 
-        b.read_rtcp();
+                let number_frames = next_audio_frames.len();
+
+                let Ok(rtp_packets) =
+                    packetizer.packetize(&Bytes::from(next_audio_frames), number_frames as u32)
+                else {
+                    continue;
+                };
+
+                for rtp_packet in rtp_packets {
+                    let _ = output_track.write_rtp(&rtp_packet).await;
+                }
+            }
+        });
+
+        let mut rtcp_buf = vec![0u8; 1500];
+
+        while let Ok((_, _)) = rtcp_sender.read(&mut rtcp_buf).await {}
+
+        audio_send_task.abort();
+
+        Result::<(), ()>::Ok(())
+    });
+
+    let mixer_sender = mixer_out.clone();
+    let mute_receiver_decoder = mute_receiver.clone();
+
+    new_peer_connection.on_track(Box::new(move |remote_track, rtcp_receiver, _| {
+        let channel_number = CHANNEL_INDEXER.fetch_add(1, Ordering::SeqCst);
+
+        let Ok(mut decoder) = Decoder::new(SAMPLE_RATE, Channels::Mono) else {
+            return Box::pin(async {});
+        };
+
+        let _ = mixer_sender.send(MixerMessage::Open(channel_number));
+
+        let mixer_sender_loop = mixer_sender.clone();
+        let mixer_sender_termination = mixer_sender_loop.clone();
+        let mut mute_receiver_decoder = mute_receiver_decoder.clone();
+
+        tokio::spawn(async move {
+            let audio_receive_task = tokio::spawn(async move {
+                loop {
+                    let Ok((rtp_packet, _)) = remote_track.read_rtp().await else {
+                        continue;
+                    };
+
+                    let sequence_number = rtp_packet.header.sequence_number;
+
+                    let mut audio_data: [f32; FRAME_LENGTH_1200] = [0.0; FRAME_LENGTH_1200];
+
+                    let decode_result =
+                        decoder.decode_float(&rtp_packet.payload, &mut audio_data, false);
+
+                    let Ok(decode_length) = decode_result else {
+                        continue;
+                    };
+
+                    let mute = *mute_receiver_decoder.borrow_and_update();
+
+                    let _ = mixer_sender_loop.send(MixerMessage::Samples(
+                        channel_number,
+                        sequence_number,
+                        audio_data
+                            .to_vec()
+                            .drain(0..decode_length)
+                            .map(|sample| if mute { 0.0 } else { sample })
+                            .collect(),
+                    ));
+                }
+            });
+
+            let mut rtcp_buf = vec![0u8; 1500];
+
+            while let Ok((_, _)) = rtcp_receiver.read(&mut rtcp_buf).await {}
+
+            audio_receive_task.abort();
+
+            let _ = mixer_sender_termination.send(MixerMessage::Close(channel_number));
+        });
 
         Box::pin(async {})
     }));

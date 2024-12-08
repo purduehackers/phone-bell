@@ -1,9 +1,8 @@
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc;
 
 use websocket::{
     client::sync::Client,
     stream::sync::{TcpStream, TlsStream},
-    ws::Sender as SenderTrait,
     ClientBuilder, Message, OwnedMessage,
 };
 
@@ -14,8 +13,8 @@ use super::{PhoneIncomingMessage, PhoneOutgoingMessage};
 pub struct PhoneSocket {
     websocket_client: Option<Client<TlsStream<TcpStream>>>,
     phone_side: PhoneSide,
-    outgoing_receiver: Receiver<PhoneOutgoingMessage>,
-    incoming_sender: Sender<PhoneIncomingMessage>,
+    outgoing_receiver: mpsc::Receiver<PhoneOutgoingMessage>,
+    incoming_sender: mpsc::Sender<PhoneIncomingMessage>,
 }
 
 impl PhoneSocket {
@@ -23,11 +22,11 @@ impl PhoneSocket {
         phone_side: PhoneSide,
     ) -> (
         PhoneSocket,
-        Sender<PhoneOutgoingMessage>,
-        Receiver<PhoneIncomingMessage>,
+        mpsc::Sender<PhoneOutgoingMessage>,
+        mpsc::Receiver<PhoneIncomingMessage>,
     ) {
-        let (outgoing_sender, outgoing_receiver) = channel();
-        let (incoming_sender, incoming_receiver) = channel();
+        let (outgoing_sender, outgoing_receiver) = mpsc::channel();
+        let (incoming_sender, incoming_receiver) = mpsc::channel();
 
         let mut socket = PhoneSocket {
             websocket_client: None,
@@ -66,6 +65,8 @@ impl PhoneSocket {
             return;
         };
 
+        let _ = websocket_client.set_nonblocking(true);
+
         self.websocket_client = Some(websocket_client);
     }
 
@@ -78,10 +79,8 @@ impl PhoneSocket {
             if let Some(websocket_client) = &mut self.websocket_client {
                 let mut should_shutdown = false;
 
-                let mut sender = websocket::sender::Sender::new(true);
-                let mut buf = Vec::<u8>::new();
-
-                'message_iterate: for message in (*websocket_client).incoming_messages().flatten() {
+                'message_iterate: while let Ok(message) = (*websocket_client).recv_message() {
+                    println!("Phone Socket rx: {:?}", message);
                     match message {
                         OwnedMessage::Text(data) => {
                             let Ok(message): Result<PhoneIncomingMessage, serde_json::Error> =
@@ -100,7 +99,7 @@ impl PhoneSocket {
                             break 'message_iterate;
                         }
                         OwnedMessage::Ping(data) => {
-                            let _ = sender.send_message(&mut buf, &Message::pong(data));
+                            let _ = websocket_client.send_message(&Message::pong(data));
                         }
                         OwnedMessage::Pong(_) => {}
                     }
@@ -109,15 +108,15 @@ impl PhoneSocket {
                 if should_shutdown {
                     self.websocket_client = None;
                 } else {
-                    for message in self.outgoing_receiver.iter() {
+                    while let Ok(message) = self.outgoing_receiver.try_recv() {
+                        println!("Phone Socket tx: {:?}", message);
+
                         let Ok(message_string) = serde_json::to_string(&message) else {
                             continue;
                         };
 
-                        let _ = sender.send_message(&mut buf, &Message::text(message_string));
+                        let _ = websocket_client.send_message(&Message::text(message_string));
                     }
-
-                    let _ = (*websocket_client).writer_mut().write_all(&buf);
                 }
             }
         }

@@ -1,4 +1,4 @@
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc;
 
 use crate::hardware::PhoneHardware;
 
@@ -14,11 +14,11 @@ struct UIState {
     dialing_enabled: bool,
     dialed_number: String,
     #[data(ignore)]
-    dial_sender: Sender<u8>,
+    dial_sender: mpsc::Sender<u8>,
 
     hook_state: bool,
     #[data(ignore)]
-    hook_state_sender: Sender<bool>,
+    hook_state_sender: mpsc::Sender<bool>,
 
     ringing: bool,
 }
@@ -171,10 +171,10 @@ pub struct Hardware {
 
     last_dialed_number: String,
     dialed_number: String,
-    dial_receiver: Receiver<u8>,
+    dial_receiver: mpsc::Receiver<u8>,
 
     hook_state: bool,
-    hook_state_receiver: Receiver<bool>,
+    hook_state_receiver: mpsc::Receiver<bool>,
     launcher: Option<force_send_sync::Send<Launcher>>,
 }
 
@@ -197,10 +197,10 @@ impl Hardware {
 
 impl PhoneHardware for Hardware {
     fn create() -> Self {
-        let (sender, receiver) = channel::<ExtEventSink>();
+        let (sender, receiver) = mpsc::channel::<ExtEventSink>();
 
-        let (hook_state_sender, hook_state_receiver) = channel::<bool>();
-        let (dial_sender, dial_receiver) = channel::<u8>();
+        let (hook_state_sender, hook_state_receiver) = mpsc::channel::<bool>();
+        let (dial_sender, dial_receiver) = mpsc::channel::<u8>();
 
         let main_window = WindowDesc::new(ui_builder())
             .title("Phone Bell")
