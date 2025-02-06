@@ -8,7 +8,8 @@ Type=simple
 Restart=always
 RestartSec=1
 User=hackers
-ExecStart=/home/hackers/phone-bell-software
+ExecStart=/home/hackers/phone-bell/Software/target/release/phone-bell-software
+WorkingDirectory=/home/hackers/phone-bell/Software
 
 [Install]
 WantedBy=default.target
