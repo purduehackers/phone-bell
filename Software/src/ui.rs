@@ -108,7 +108,7 @@ pub async fn ui_entry(
 
     #[cfg(feature = "real")]
     {
-        ui_process_join_handle.await;
+        let _ = ui_process_join_handle.await;
     }
     #[cfg(not(feature = "real"))]
     {
