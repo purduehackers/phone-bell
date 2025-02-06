@@ -11,7 +11,7 @@ use std::{
 use bytes::Bytes;
 use opus::{Channels, Decoder, Encoder};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, watch};
+use tokio::sync::broadcast;
 use uuid::Uuid;
 use webrtc::{
     api::{
@@ -77,59 +77,54 @@ pub struct PhoneRTC {
         >,
     >,
     webrtc_api: API,
-    mute_receiver: mpsc::Receiver<bool>,
     peer_connections: HashMap<Uuid, RTCPeerConnection>,
     mixer_out: mpsc::Sender<MixerMessage>,
     mic_in: broadcast::Sender<Vec<f32>>,
     id: Uuid,
-    muted: bool,
 }
 
 impl PhoneRTC {
     pub fn create(
         mixer_out: mpsc::Sender<MixerMessage>,
         mic_in: broadcast::Sender<Vec<f32>>,
-    ) -> (PhoneRTC, mpsc::Sender<bool>) {
-        let (mute_sender, mute_receiver) = mpsc::channel();
+    ) -> PhoneRTC {
+        let mut media_engine = MediaEngine::default();
 
-        let mut m = MediaEngine::default();
-
-        m.register_codec(
-            RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
-                    mime_type: MIME_TYPE_OPUS.to_owned(),
+        media_engine
+            .register_codec(
+                RTCRtpCodecParameters {
+                    capability: RTCRtpCodecCapability {
+                        mime_type: MIME_TYPE_OPUS.to_owned(),
+                        ..Default::default()
+                    },
+                    payload_type: 120,
                     ..Default::default()
                 },
-                payload_type: 120,
-                ..Default::default()
-            },
-            RTPCodecType::Audio,
-        )
-        .unwrap();
+                RTPCodecType::Audio,
+            )
+            .unwrap();
 
         let mut registry = Registry::new();
 
-        registry = register_default_interceptors(registry, &mut m).unwrap();
+        registry = register_default_interceptors(registry, &mut media_engine).unwrap();
 
         let webrtc_api = APIBuilder::new()
-            .with_media_engine(m)
+            .with_media_engine(media_engine)
             .with_interceptor_registry(registry)
             .build();
 
         let mut socket = PhoneRTC {
             signaling_socket: None,
             webrtc_api,
-            mute_receiver,
             peer_connections: HashMap::new(),
             mixer_out,
             mic_in,
             id: Uuid::new_v4(),
-            muted: true,
         };
 
         socket.connect();
 
-        (socket, mute_sender)
+        socket
     }
 
     fn connect(&mut self) {
@@ -175,17 +170,9 @@ impl PhoneRTC {
             mpsc::channel::<SignalingMessage>();
         let (signaling_pong_sender, signaling_pong_receiver) = mpsc::channel::<Vec<u8>>();
 
-        let (mute_sender, mute_receiver) = watch::channel(true);
-
         loop {
             if self.signaling_socket.is_none() {
                 self.connect();
-            }
-
-            if let Ok(mute) = self.mute_receiver.try_recv() {
-                self.muted = mute;
-
-                let _ = mute_sender.send(mute);
             }
 
             if let Ok((connection_state, from)) = connection_change_channel_receiver.try_recv() {
@@ -265,7 +252,6 @@ impl PhoneRTC {
                                                 &self.mixer_out,
                                                 &self.mic_in,
                                                 &new_peer_connection,
-                                                &mute_receiver,
                                             )
                                             .await
                                             {
@@ -349,7 +335,6 @@ impl PhoneRTC {
                                                 &self.mixer_out,
                                                 &self.mic_in,
                                                 &new_peer_connection,
-                                                &mute_receiver,
                                             )
                                             .await
                                             {
@@ -535,7 +520,6 @@ async fn setup_peer_connection_audio(
     mixer_out: &mpsc::Sender<MixerMessage>,
     mic_in: &broadcast::Sender<Vec<f32>>,
     new_peer_connection: &RTCPeerConnection,
-    mute_receiver: &watch::Receiver<bool>,
 ) -> bool {
     const SAMPLE_RATE_PER_MILLISECOND: f32 = (SAMPLE_RATE / 1000) as f32;
 
@@ -560,15 +544,12 @@ async fn setup_peer_connection_audio(
     };
 
     let mut mic_receiver = mic_in.subscribe();
-    let mute_receiver_encoder = mute_receiver.clone();
 
     tokio::spawn(async move {
         let Ok(mut encoder) = Encoder::new(SAMPLE_RATE, Channels::Mono, opus::Application::Voip)
         else {
             return Err(());
         };
-
-        let mut mute_receiver_encoder = mute_receiver_encoder.clone();
 
         let audio_send_task = tokio::spawn(async move {
             let payloader = OpusPayloader;
@@ -587,17 +568,8 @@ async fn setup_peer_connection_audio(
                     continue;
                 };
 
-                let mute = *mute_receiver_encoder.borrow_and_update();
-
-                let next_audio_frames_processed = next_audio_frames
-                    .into_iter()
-                    .map(|sample| if mute { 0.0 } else { sample })
-                    .collect::<Vec<f32>>();
-
-                let encode_result = encoder.encode_vec_float(
-                    next_audio_frames_processed.as_slice(),
-                    next_audio_frames_processed.len(),
-                );
+                let encode_result =
+                    encoder.encode_vec_float(next_audio_frames.as_slice(), next_audio_frames.len());
 
                 let Ok(next_audio_frames) = encode_result else {
                     continue;
@@ -627,7 +599,6 @@ async fn setup_peer_connection_audio(
     });
 
     let mixer_sender = mixer_out.clone();
-    let mute_receiver_decoder = mute_receiver.clone();
 
     new_peer_connection.on_track(Box::new(move |remote_track, rtcp_receiver, _| {
         let channel_number = CHANNEL_INDEXER.fetch_add(1, Ordering::SeqCst);
@@ -640,7 +611,6 @@ async fn setup_peer_connection_audio(
 
         let mixer_sender_loop = mixer_sender.clone();
         let mixer_sender_termination = mixer_sender_loop.clone();
-        let mut mute_receiver_decoder = mute_receiver_decoder.clone();
 
         tokio::spawn(async move {
             let audio_receive_task = tokio::spawn(async move {
@@ -660,16 +630,10 @@ async fn setup_peer_connection_audio(
                         continue;
                     };
 
-                    let mute = *mute_receiver_decoder.borrow_and_update();
-
                     let _ = mixer_sender_loop.send(MixerMessage::Samples(
                         channel_number,
                         sequence_number,
-                        audio_data
-                            .to_vec()
-                            .drain(0..decode_length)
-                            .map(|sample| if mute { 0.0 } else { sample })
-                            .collect(),
+                        audio_data.to_vec().drain(0..decode_length).collect(),
                     ));
                 }
             });

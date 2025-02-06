@@ -5,16 +5,23 @@ use cpal::{
     BuildStreamError, Device, FromSample, Host, Sample, SampleFormat, SampleRate, Stream,
     StreamConfig, StreamError, SupportedStreamConfig,
 };
+use tokio::sync::watch;
 
 use crate::config::SAMPLE_RATE;
 
 #[macro_export]
 macro_rules! create_output_stream {
-    ($device:tt, $config:tt, $x:ty, $audio_receiver:tt, $error_sender:tt, $config_copy:tt) => {
+    ($device:tt, $config:tt, $x:ty, $audio_receiver:tt, $mute_watcher:tt, $error_sender:tt, $config_copy:tt) => {
         $device.build_output_stream(
             &$config.config(),
             move |data, info| {
-                Self::output_stream_data_callback::<$x>(data, info, &$audio_receiver, &$config_copy)
+                Self::output_stream_data_callback::<$x>(
+                    data,
+                    info,
+                    &$audio_receiver,
+                    &mut $mute_watcher,
+                    &$config_copy,
+                )
             },
             move |error| {
                 let _ = $error_sender.send((StreamKind::Outgoing, error));
@@ -26,11 +33,17 @@ macro_rules! create_output_stream {
 
 #[macro_export]
 macro_rules! create_input_stream {
-    ($device:tt, $config:tt, $x:ty, $audio_receiver:tt, $error_sender:tt, $config_copy:tt) => {
+    ($device:tt, $config:tt, $x:ty, $audio_receiver:tt, $mute_watcher:tt, $error_sender:tt, $config_copy:tt) => {
         $device.build_input_stream(
             &$config.config(),
             move |data, info| {
-                Self::input_stream_data_callback::<$x>(data, info, &$audio_receiver, &$config_copy)
+                Self::input_stream_data_callback::<$x>(
+                    data,
+                    info,
+                    &$audio_receiver,
+                    &mut $mute_watcher,
+                    &$config_copy,
+                )
             },
             move |error| {
                 let _ = $error_sender.send((StreamKind::Incoming, error));
@@ -143,6 +156,8 @@ pub struct AudioSystem {
 
     pub error_buffer: Receiver<(StreamKind, StreamError)>,
     error_buffer_sender: Sender<(StreamKind, StreamError)>,
+
+    mute_watcher: watch::Sender<bool>,
 }
 
 impl AudioSystem {
@@ -150,6 +165,8 @@ impl AudioSystem {
         let cpal_host = cpal::default_host();
 
         let (error_buffer_sender, error_buffer) = mpsc::channel();
+
+        let (mute_watcher, _) = watch::channel(true);
 
         let mut audio_system = AudioSystem {
             cpal_host,
@@ -163,6 +180,8 @@ impl AudioSystem {
 
             error_buffer,
             error_buffer_sender,
+
+            mute_watcher,
         };
 
         audio_system.prepare_input();
@@ -296,41 +315,123 @@ impl AudioSystem {
         &self,
         device: &Device,
         config: &SupportedStreamConfig,
-        audio_sender: Sender<f32>,
-        error_sender: Sender<(StreamKind, StreamError)>,
+        audio_sender: mpsc::Sender<f32>,
+        error_sender: mpsc::Sender<(StreamKind, StreamError)>,
     ) -> Option<Stream> {
         let config_copy = config.clone();
 
+        let mut mute_watcher = self.mute_watcher.subscribe();
+
         match config.sample_format() {
             SampleFormat::F32 => {
-                create_input_stream!(device, config, f32, audio_sender, error_sender, config_copy)
+                create_input_stream!(
+                    device,
+                    config,
+                    f32,
+                    audio_sender,
+                    mute_watcher,
+                    error_sender,
+                    config_copy
+                )
             }
             SampleFormat::I16 => {
-                create_input_stream!(device, config, i16, audio_sender, error_sender, config_copy)
+                create_input_stream!(
+                    device,
+                    config,
+                    i16,
+                    audio_sender,
+                    mute_watcher,
+                    error_sender,
+                    config_copy
+                )
             }
             SampleFormat::U16 => {
-                create_input_stream!(device, config, u16, audio_sender, error_sender, config_copy)
+                create_input_stream!(
+                    device,
+                    config,
+                    u16,
+                    audio_sender,
+                    mute_watcher,
+                    error_sender,
+                    config_copy
+                )
             }
             SampleFormat::I8 => {
-                create_input_stream!(device, config, i8, audio_sender, error_sender, config_copy)
+                create_input_stream!(
+                    device,
+                    config,
+                    i8,
+                    audio_sender,
+                    mute_watcher,
+                    error_sender,
+                    config_copy
+                )
             }
             SampleFormat::I32 => {
-                create_input_stream!(device, config, i32, audio_sender, error_sender, config_copy)
+                create_input_stream!(
+                    device,
+                    config,
+                    i32,
+                    audio_sender,
+                    mute_watcher,
+                    error_sender,
+                    config_copy
+                )
             }
             SampleFormat::I64 => {
-                create_input_stream!(device, config, i64, audio_sender, error_sender, config_copy)
+                create_input_stream!(
+                    device,
+                    config,
+                    i64,
+                    audio_sender,
+                    mute_watcher,
+                    error_sender,
+                    config_copy
+                )
             }
             SampleFormat::U8 => {
-                create_input_stream!(device, config, u8, audio_sender, error_sender, config_copy)
+                create_input_stream!(
+                    device,
+                    config,
+                    u8,
+                    audio_sender,
+                    mute_watcher,
+                    error_sender,
+                    config_copy
+                )
             }
             SampleFormat::U32 => {
-                create_input_stream!(device, config, u32, audio_sender, error_sender, config_copy)
+                create_input_stream!(
+                    device,
+                    config,
+                    u32,
+                    audio_sender,
+                    mute_watcher,
+                    error_sender,
+                    config_copy
+                )
             }
             SampleFormat::U64 => {
-                create_input_stream!(device, config, u64, audio_sender, error_sender, config_copy)
+                create_input_stream!(
+                    device,
+                    config,
+                    u64,
+                    audio_sender,
+                    mute_watcher,
+                    error_sender,
+                    config_copy
+                )
             }
             SampleFormat::F64 => {
-                create_input_stream!(device, config, f64, audio_sender, error_sender, config_copy)
+                create_input_stream!(
+                    device,
+                    config,
+                    f64,
+                    audio_sender,
+                    mute_watcher,
+                    error_sender,
+                    config_copy
+                )
             }
             _ => Err(BuildStreamError::StreamConfigNotSupported),
         }
@@ -339,13 +440,20 @@ impl AudioSystem {
     fn input_stream_data_callback<T: Sample>(
         data: &[T],
         _output_callback_info: &cpal::InputCallbackInfo,
-        audio_buffer_reference: &Sender<f32>,
+        audio_buffer_reference: &mpsc::Sender<f32>,
+        mute_watcher: &mut watch::Receiver<bool>,
         config: &SupportedStreamConfig,
     ) where
         f32: FromSample<T>,
     {
+        let is_mute = *(mute_watcher.borrow_and_update());
+
         for sample in data.iter().step_by(config.channels() as usize) {
-            let _ = audio_buffer_reference.send(sample.to_sample::<f32>());
+            let _ = audio_buffer_reference.send(if is_mute {
+                Sample::EQUILIBRIUM
+            } else {
+                sample.to_sample::<f32>()
+            });
         }
     }
 
@@ -353,10 +461,12 @@ impl AudioSystem {
         &self,
         device: &Device,
         config: &SupportedStreamConfig,
-        audio_receiver: Receiver<f32>,
-        error_sender: Sender<(StreamKind, StreamError)>,
+        audio_receiver: mpsc::Receiver<f32>,
+        error_sender: mpsc::Sender<(StreamKind, StreamError)>,
     ) -> Option<Stream> {
         let config_copy = config.clone();
+
+        let mut mute_watcher = self.mute_watcher.subscribe();
 
         match config.sample_format() {
             SampleFormat::F32 => {
@@ -365,6 +475,7 @@ impl AudioSystem {
                     config,
                     f32,
                     audio_receiver,
+                    mute_watcher,
                     error_sender,
                     config_copy
                 )
@@ -375,6 +486,7 @@ impl AudioSystem {
                     config,
                     i16,
                     audio_receiver,
+                    mute_watcher,
                     error_sender,
                     config_copy
                 )
@@ -385,6 +497,7 @@ impl AudioSystem {
                     config,
                     u16,
                     audio_receiver,
+                    mute_watcher,
                     error_sender,
                     config_copy
                 )
@@ -395,6 +508,7 @@ impl AudioSystem {
                     config,
                     i8,
                     audio_receiver,
+                    mute_watcher,
                     error_sender,
                     config_copy
                 )
@@ -405,6 +519,7 @@ impl AudioSystem {
                     config,
                     i32,
                     audio_receiver,
+                    mute_watcher,
                     error_sender,
                     config_copy
                 )
@@ -415,6 +530,7 @@ impl AudioSystem {
                     config,
                     i64,
                     audio_receiver,
+                    mute_watcher,
                     error_sender,
                     config_copy
                 )
@@ -425,6 +541,7 @@ impl AudioSystem {
                     config,
                     u8,
                     audio_receiver,
+                    mute_watcher,
                     error_sender,
                     config_copy
                 )
@@ -435,6 +552,7 @@ impl AudioSystem {
                     config,
                     u32,
                     audio_receiver,
+                    mute_watcher,
                     error_sender,
                     config_copy
                 )
@@ -445,6 +563,7 @@ impl AudioSystem {
                     config,
                     u64,
                     audio_receiver,
+                    mute_watcher,
                     error_sender,
                     config_copy
                 )
@@ -455,6 +574,7 @@ impl AudioSystem {
                     config,
                     f64,
                     audio_receiver,
+                    mute_watcher,
                     error_sender,
                     config_copy
                 )
@@ -466,12 +586,21 @@ impl AudioSystem {
     fn output_stream_data_callback<T: Sample + FromSample<f32>>(
         data: &mut [T],
         _output_callback_info: &cpal::OutputCallbackInfo,
-        audio_buffer_reference: &Receiver<f32>,
+        audio_buffer_reference: &mpsc::Receiver<f32>,
+        mute_watcher: &mut watch::Receiver<bool>,
         config: &SupportedStreamConfig,
     ) {
+        let is_mute = *(mute_watcher.borrow_and_update());
+
         for sample in data.iter_mut().step_by(config.channels() as usize) {
             match audio_buffer_reference.try_recv() {
-                Ok(sample_value) => *sample = T::from_sample(sample_value),
+                Ok(sample_value) => {
+                    *sample = if is_mute {
+                        Sample::EQUILIBRIUM
+                    } else {
+                        T::from_sample(sample_value)
+                    }
+                }
                 Err(_) => *sample = Sample::EQUILIBRIUM,
             }
         }
@@ -559,6 +688,10 @@ impl AudioSystem {
             }
             None => Err(StreamReadError::NoStream),
         }
+    }
+
+    pub fn set_mute(&mut self, mute: bool) {
+        let _ = self.mute_watcher.send(mute);
     }
 
     pub fn get_input_config(&self) -> Option<StreamConfig> {
