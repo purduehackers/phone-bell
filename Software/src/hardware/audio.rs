@@ -195,7 +195,7 @@ impl AudioSystem {
             match &self.input_stream {
                 CPALStreamState::Nothing => {
                     let Some(device) = self.new_input_device() else {
-                        println!("Failed to open audio device!");
+                        println!("Failed to open input device!");
 
                         return false;
                     };
@@ -204,7 +204,7 @@ impl AudioSystem {
                 }
                 CPALStreamState::Device(device) => {
                     let Some(config) = self.new_input_config(device) else {
-                        println!("Failed to get audio config!");
+                        println!("Failed to get input config!");
 
                         return false;
                     };
@@ -220,7 +220,7 @@ impl AudioSystem {
                         audio_sender,
                         self.error_buffer_sender.clone(),
                     ) else {
-                        println!("Failed to init audio streams!");
+                        println!("Failed to init input streams!");
 
                         return false;
                     };
@@ -243,7 +243,7 @@ impl AudioSystem {
             match &self.output_stream {
                 CPALStreamState::Nothing => {
                     let Some(device) = self.new_output_device() else {
-                        println!("Failed to open audio device!");
+                        println!("Failed to open output device!");
 
                         return false;
                     };
@@ -252,7 +252,7 @@ impl AudioSystem {
                 }
                 CPALStreamState::Device(device) => {
                     let Some(config) = self.new_output_config(device) else {
-                        println!("Failed to get audio config!");
+                        println!("Failed to get output config!");
 
                         return false;
                     };
@@ -268,7 +268,7 @@ impl AudioSystem {
                         audio_receiver,
                         self.error_buffer_sender.clone(),
                     ) else {
-                        println!("Failed to init audio streams!");
+                        println!("Failed to init output streams!");
 
                         return false;
                     };
