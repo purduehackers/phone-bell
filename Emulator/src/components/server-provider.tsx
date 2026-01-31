@@ -36,7 +36,7 @@ interface PhoneBellContextInterface {
 }
 
 const PhoneBellContext = createContext<PhoneBellContextInterface | undefined>(
-	undefined
+	undefined,
 );
 
 export const usePhoneBellContext = () => {};
@@ -58,6 +58,10 @@ type PhoneIncomingMessage =
 	| {
 			type: "Hook";
 			state: boolean;
+	  }
+	| {
+			type: "IrohAddr";
+			addr: string;
 	  };
 
 type PhoneOutgoingMessage =
@@ -65,7 +69,11 @@ type PhoneOutgoingMessage =
 			type: "Ring";
 			state: boolean;
 	  }
-	| { type: "ClearDial" };
+	| { type: "ClearDial" }
+	| {
+			type: "PeerIrohAddr";
+			addr: string;
+	  };
 
 type WebRTCSignalingMessage =
 	| {
@@ -123,11 +131,11 @@ export const PhoneBellProvider: FC<PropsWithChildren<{}>> = ({ children }) => {
 	const [inCall, setInCall] = useState<boolean>(true);
 
 	const [phoneType, setPhoneTypeInternal] = useState<PhoneType>(
-		PhoneType.Outside
+		PhoneType.Outside,
 	);
 
 	const [connectionState, setConnectionState] = useState<ConnectionState>(
-		ConnectionState.Connecting
+		ConnectionState.Connecting,
 	);
 
 	const phoneStateSocket = useRef<ReconnectingWebSocket | null>(null);
@@ -144,14 +152,14 @@ export const PhoneBellProvider: FC<PropsWithChildren<{}>> = ({ children }) => {
 		console.log(
 			`Creating WebSocket Connection of type: ${
 				["Outside", "Inside"][phoneType]
-			}`
+			}`,
 		);
 
 		phoneStateSocket.current = new ReconnectingWebSocket(
 			() =>
 				`wss://api.purduehackers.com/phonebell/${
 					["outside", "inside"][phoneType]
-				}`
+				}`,
 		);
 
 		phoneStateSocket.current.onopen = () => {
@@ -184,6 +192,13 @@ export const PhoneBellProvider: FC<PropsWithChildren<{}>> = ({ children }) => {
 			case "ClearDial":
 				setDialedNumber("");
 				setEnableDialing(true);
+				break;
+			case "PeerIrohAddr":
+				// Iroh addresses from Rust phones - browser can't connect to iroh directly
+				// Would need a WebRTC-to-iroh bridge on the server for audio interop
+				console.log(
+					`Received iroh peer address (browser cannot connect directly): ${message.addr}`,
+				);
 				break;
 		}
 	};
@@ -297,7 +312,7 @@ export const usePhoneBell = (): [
 
 	(status: boolean) => void,
 	(type: PhoneType) => void,
-	(number: string) => void
+	(number: string) => void,
 ] => {
 	const context = useContext(PhoneBellContext);
 
@@ -323,7 +338,7 @@ const uuidv4 = (): string => {
 		(
 			+c ^
 			(crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))
-		).toString(16)
+		).toString(16),
 	);
 };
 
@@ -339,11 +354,11 @@ export class WebRTCAudioClient {
 
 	constructor() {
 		console.log(
-			`Creating WebRTC Signaling Server Connection, ClientUUID: ${CLIENT_UUID}`
+			`Creating WebRTC Signaling Server Connection, ClientUUID: ${CLIENT_UUID}`,
 		);
 
 		this.webRTCSignalingSocket = new ReconnectingWebSocket(
-			"wss://api.purduehackers.com/phonebell/signaling"
+			"wss://api.purduehackers.com/phonebell/signaling",
 		);
 
 		this.webRTCSignalingSocket.onopen = () => {
@@ -363,7 +378,7 @@ export class WebRTCAudioClient {
 			.then((currentStream) => {
 				for (let track of currentStream.getAudioTracks()) {
 					for (let peerConnection of Object.values(
-						this.peerConnections
+						this.peerConnections,
 					)) {
 						peerConnection.addTrack(track, currentStream);
 					}
@@ -391,7 +406,7 @@ export class WebRTCAudioClient {
 
 	registerPeerConnection = (
 		peerConnection: RTCPeerConnection,
-		target: string
+		target: string,
 	) => {
 		this.peerConnections[target] = peerConnection;
 
@@ -403,7 +418,7 @@ export class WebRTCAudioClient {
 
 		peerConnection.addEventListener("connectionstatechange", (event) => {
 			console.log(
-				`ICEOffer Connection State Changed To: ${peerConnection.connectionState}`
+				`ICEOffer Connection State Changed To: ${peerConnection.connectionState}`,
 			);
 
 			if (
@@ -432,7 +447,7 @@ export class WebRTCAudioClient {
 	webRTCSignalingSocketTransmit = (message: WebRTCSignalingMessage) => {
 		console.log(
 			`%c WebRTC Signaling Socket Transmit: ${message.type}`,
-			"color: #00aaff"
+			"color: #00aaff",
 		);
 		console.log(message);
 
@@ -441,7 +456,7 @@ export class WebRTCAudioClient {
 	webRTCSignalingSocketReceive = (message: WebRTCSignalingMessage) => {
 		console.log(
 			`%c WebRTC Signaling Socket Receive: ${message.type}`,
-			"color: #ff00aa"
+			"color: #ff00aa",
 		);
 		console.log(message);
 
@@ -462,12 +477,12 @@ export class WebRTCAudioClient {
 					console.log(`New JoinAck WebRTC Client: ${message.from}`);
 
 					const newPeerConnection = new RTCPeerConnection(
-						WEBRTC_PEER_CONNECTION_CONFIGURATION
+						WEBRTC_PEER_CONNECTION_CONFIGURATION,
 					);
 
 					this.registerPeerConnection(
 						newPeerConnection,
-						message.from
+						message.from,
 					);
 
 					(async () => {
@@ -497,17 +512,17 @@ export class WebRTCAudioClient {
 					console.log(`New ICEOffer WebRTC Client: ${message.from}`);
 
 					const newPeerConnection = new RTCPeerConnection(
-						WEBRTC_PEER_CONNECTION_CONFIGURATION
+						WEBRTC_PEER_CONNECTION_CONFIGURATION,
 					);
 
 					this.registerPeerConnection(
 						newPeerConnection,
-						message.from
+						message.from,
 					);
 
 					(async () => {
 						await newPeerConnection.setRemoteDescription(
-							new RTCSessionDescription(message.offer)
+							new RTCSessionDescription(message.offer),
 						);
 
 						const answer = await newPeerConnection.createAnswer({
@@ -536,7 +551,7 @@ export class WebRTCAudioClient {
 										to: message.from,
 									});
 								}
-							}
+							},
 						);
 					})();
 				}
@@ -555,7 +570,7 @@ export class WebRTCAudioClient {
 						await this.peerConnections[
 							message.from
 						].setRemoteDescription(
-							new RTCSessionDescription(message.answer)
+							new RTCSessionDescription(message.answer),
 						);
 
 						this.peerConnections[message.from].addEventListener(
@@ -571,7 +586,7 @@ export class WebRTCAudioClient {
 										to: message.from,
 									});
 								}
-							}
+							},
 						);
 					})();
 				}

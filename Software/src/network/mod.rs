@@ -1,4 +1,4 @@
-pub mod rtc;
+pub mod iroh_voip;
 pub mod socket;
 
 use serde::{Deserialize, Serialize};
