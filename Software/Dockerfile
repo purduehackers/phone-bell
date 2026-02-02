@@ -31,5 +31,12 @@ COPY . .
 
 # Build for Raspberry Pi (no-default-features to skip druid/GUI)
 RUN cargo build --release --target aarch64-unknown-linux-gnu --no-default-features --features real
+RUN aarch64-linux-gnu-strip /app/target/aarch64-unknown-linux-gnu/release/phone-bell-software
 
 # The binary will be at /app/target/aarch64-unknown-linux-gnu/release/phone-bell-software
+
+FROM scratch
+COPY --from=builder /app/target/aarch64-unknown-linux-gnu/release/phone-bell-software /phone-bell-software-arm64
+ENTRYPOINT ["/phone-bell-software-arm64"]
+
+# The binary will be at /phone-bell-software-arm64 in the output image
