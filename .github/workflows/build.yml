@@ -1,0 +1,32 @@
+name: Build Pi software
+
+on:
+  push: {}
+  pull_request: {}
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            Software
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build binary
+        run: ./build-rpi.sh
+        working-directory: Software
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: phone-bell-software-arm64
+          path: Software/phone-bell-software-arm64
+          if-no-files-found: error
+          compression-level: 0
