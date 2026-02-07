@@ -1,12 +1,13 @@
 use std::{
     sync::mpsc::{channel, Receiver, Sender, TryRecvError},
     thread,
+    time::Duration,
 };
 
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    BuildStreamError, Device, FromSample, Host, Sample, SampleFormat, Stream, StreamConfig,
-    StreamError, SupportedStreamConfig,
+    BuildStreamError, Device, FromSample, Host, Sample, SampleFormat, SampleRate, Stream,
+    StreamConfig, StreamError, SupportedStreamConfig,
 };
 
 #[macro_export]
@@ -73,11 +74,28 @@ impl AudioSystemMarshaller {
             let mut audio_system = AudioSystem::create();
 
             loop {
-                if let Ok(s) = audio_system.read_next_samples() {
-                    input.send(s).unwrap();
+                let input_ready = audio_system.is_input_ready();
+                let output_ready = audio_system.is_output_ready();
+
+                if input_ready {
+                    if let Ok(s) = audio_system.read_next_samples() {
+                        if !s.is_empty() {
+                            input.send(s).unwrap();
+                        }
+                    }
                 }
                 if let Ok(r) = output.try_recv() {
-                    audio_system.write_next_samples(r.as_slice()).unwrap();
+                    if output_ready {
+                        audio_system.write_next_samples(r.as_slice()).unwrap();
+                    }
+                }
+
+                if !input_ready || !output_ready {
+                    // Audio not set up yet, wait before retrying
+                    thread::sleep(Duration::from_secs(2));
+                } else {
+                    // Sleep ~20ms to collect one Opus frame worth of samples
+                    thread::sleep(Duration::from_millis(20));
                 }
             }
         });
@@ -240,20 +258,53 @@ impl AudioSystem {
         self.cpal_host.default_output_device()
     }
 
+    fn pick_config(config_range: cpal::SupportedStreamConfigRange) -> SupportedStreamConfig {
+        // Prefer 48kHz (Opus native rate), then clamp to supported range
+        let target = SampleRate(48000);
+        let min = config_range.min_sample_rate();
+        let max = config_range.max_sample_rate();
+        let rate = if target.0 >= min.0 && target.0 <= max.0 {
+            target
+        } else if target.0 < min.0 {
+            min
+        } else {
+            max
+        };
+        config_range.with_sample_rate(rate)
+    }
+
     fn new_input_config(&self, device: &Device) -> Option<SupportedStreamConfig> {
         match device.supported_input_configs() {
-            Ok(mut supported_configs_range) => supported_configs_range
-                .next()
-                .map(|supported_config| supported_config.with_max_sample_rate()),
-            Err(_) => None,
+            Ok(supported_configs_range) => {
+                let config = supported_configs_range
+                    .map(Self::pick_config)
+                    .next();
+                if config.is_none() {
+                    eprintln!("No supported input configurations available for device");
+                }
+                config
+            }
+            Err(e) => {
+                eprintln!("Error querying supported input configs: {}", e);
+                None
+            }
         }
     }
     fn new_output_config(&self, device: &Device) -> Option<SupportedStreamConfig> {
         match device.supported_output_configs() {
-            Ok(mut supported_configs_range) => supported_configs_range
-                .next()
-                .map(|supported_config| supported_config.with_max_sample_rate()),
-            Err(_) => None,
+            Ok(supported_configs_range) => {
+                let config = supported_configs_range
+                    .map(Self::pick_config)
+                    .next();
+                if config.is_none() {
+                    eprintln!("No supported output configurations available for device");
+                }
+                config
+            }
+            Err(e) => {
+                eprintln!("Error querying supported output configs: {}", e);
+                None
+            }
         }
     }
 
@@ -297,6 +348,10 @@ impl AudioSystem {
             }
             _ => Err(BuildStreamError::StreamConfigNotSupported),
         }
+        .map_err(|e| {
+            eprintln!("Error building input stream: {}", e);
+            e
+        })
         .ok()
     }
     fn input_stream_data_callback<T: Sample>(
@@ -351,6 +406,10 @@ impl AudioSystem {
             }
             _ => Err(BuildStreamError::StreamConfigNotSupported),
         }
+        .map_err(|e| {
+            eprintln!("Error building output stream: {}", e);
+            e
+        })
         .ok()
     }
     fn output_stream_data_callback<T: Sample + FromSample<f32>>(
@@ -364,6 +423,14 @@ impl AudioSystem {
                 Err(_) => *sample = Sample::EQUILIBRIUM,
             }
         }
+    }
+
+    pub fn is_input_ready(&self) -> bool {
+        matches!(&self.input_stream, CPALStreamState::DeviceConfigStream(_, _, _))
+    }
+
+    pub fn is_output_ready(&self) -> bool {
+        matches!(&self.output_stream, CPALStreamState::DeviceConfigStream(_, _, _))
     }
 
     pub fn write_next_samples(&mut self, new_samples: &[f32]) -> Result<(), StreamWriteError> {
@@ -387,7 +454,7 @@ impl AudioSystem {
             Some(buffer) => {
                 let mut sample_vec = Vec::new();
 
-                for sample in buffer.iter() {
+                for sample in buffer.try_iter() {
                     sample_vec.push(sample);
                 }
 

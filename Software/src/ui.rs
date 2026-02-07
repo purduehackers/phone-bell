@@ -6,7 +6,7 @@ use std::{
 use crate::{
     config::KNOWN_NUMBERS,
     hardware::{self, PhoneHardware},
-    network::{PhoneIncomingMessage, PhoneOutgoingMessage},
+    network::{PhoneIncomingMessage, PhoneOutgoingMessage, Sound},
 };
 use rodio::{Decoder, OutputStream, Sink, Source};
 
@@ -32,6 +32,7 @@ pub async fn ui_entry(
     hardware.enable_dialing(true);
 
     let mut in_call = false;
+    let mut ringing = false;
     let _ = mute_sender.send(true);
     let mut last_hook_state = true;
 
@@ -86,18 +87,11 @@ pub async fn ui_entry(
                     if hook_state {
                         hardware.ring(true);
                     } else {
+                        // Unmute immediately; server will also send Mute(false)
                         let _ = mute_sender.send(false);
+                        sink.clear();
 
                         if !silent_ring {
-                            // ! REMOVE THIS LATER
-                            let source =
-                                Decoder::new(Cursor::new(include_bytes!("../assets/doorbell.flac")))
-                                    .unwrap();
-
-                            sink.clear();
-                            sink.append(source.convert_samples::<f32>());
-                            sink.play();
-
                             // ! REMOVE THIS LATER
                             let client = reqwest::Client::new();
                             let _ = client
@@ -115,32 +109,34 @@ pub async fn ui_entry(
                 let _ = network_sender.send(PhoneOutgoingMessage::Hook { state: hook_state });
 
                 if hook_state {
+                    // Hung up — mute immediately; server will also send Mute(true)
                     sink.clear();
+                    let _ = mute_sender.send(true);
 
-                    if in_call {
+                    if in_call || ringing {
                         in_call = false;
-                        let _ = mute_sender.send(true);
+                        ringing = false;
 
                         hardware.enable_dialing(true);
                         hardware.dialed_number().clear();
 
                         println!("Call Ended.");
                     }
-                } else if in_call {
+                } else if ringing {
+                    // Answering an incoming call from the server
+                    println!("Answering incoming call");
                     hardware.ring(false);
-
+                    ringing = false;
+                    in_call = true;
+                    sink.clear();
+                    let _ = mute_sender.send(false);
+                } else if in_call {
+                    // Picking up after on-hook dial
+                    hardware.ring(false);
+                    sink.clear();
                     let _ = mute_sender.send(false);
 
                     if !silent_ring {
-                        // ! REMOVE THIS LATER
-                        let source =
-                            Decoder::new(Cursor::new(include_bytes!("../assets/doorbell.flac")))
-                                .unwrap();
-
-                        sink.clear();
-                        sink.append(source.convert_samples::<f32>());
-                        sink.play();
-
                         // ! REMOVE THIS LATER
                         let client = reqwest::Client::new();
                         let _ = client
@@ -148,7 +144,10 @@ pub async fn ui_entry(
                             .send()
                             .await;
                     }
+                    // Server will send Mute(false) and PlaySound(Ringback)
                 } else {
+                    // Fresh pickup, no call — play dialtone immediately
+                    // (server will also send PlaySound(Dialtone))
                     let source =
                         Decoder::new_looped(Cursor::new(include_bytes!("../assets/dialtone.flac")))
                             .unwrap();
@@ -164,11 +163,35 @@ pub async fn ui_entry(
             for network_message in network_reciever.try_iter() {
                 match network_message {
                     PhoneIncomingMessage::Ring { state } => {
+                        println!("Ring: {}", state);
                         hardware.ring(state);
+                        ringing = state;
                     }
                     PhoneIncomingMessage::ClearDial => {
                         hardware.dialed_number().clear();
                         hardware.enable_dialing(true);
+                    }
+                    PhoneIncomingMessage::PlaySound { sound } => {
+                        println!("PlaySound: {:?}", sound);
+                        match sound {
+                            Sound::Dialtone => {
+                                let source = Decoder::new_looped(Cursor::new(
+                                    include_bytes!("../assets/dialtone.flac"),
+                                ))
+                                .unwrap();
+                                sink.clear();
+                                sink.append(source.convert_samples::<f32>());
+                                sink.play();
+                            }
+                            Sound::Ringback | Sound::Hangup | Sound::None => {
+                                // TODO: add ringback and hangup sound assets
+                                sink.clear();
+                            }
+                        }
+                    }
+                    PhoneIncomingMessage::Mute { state } => {
+                        println!("Mute: {}", state);
+                        let _ = mute_sender.send(state);
                     }
                 }
             }

@@ -60,50 +60,33 @@ impl PhoneIroh {
             return;
         };
 
+        // Track pending peer address for connection attempts
+        let mut pending_peer: Option<String> = None;
+
         // Main loop
         loop {
-            // Check for mute state changes
-            if let Ok(mute) = self.mute_receiver.try_recv() {
+            // Poll sync channels (mute + peer address)
+            while let Ok(mute) = self.mute_receiver.try_recv() {
                 self.muted = mute;
                 println!("Mute state changed: {}", mute);
             }
 
-            // Check for peer address (initiates connection)
-            if let Ok(peer_addr_str) = self.peer_addr_receiver.try_recv() {
-                println!("Received peer address, attempting to connect...");
-                if let Err(e) = self.connect_to_peer(&peer_addr_str).await {
-                    eprintln!("Failed to connect to peer: {}", e);
-                }
+            while let Ok(peer_addr_str) = self.peer_addr_receiver.try_recv() {
+                println!("Received peer address: {}...", &peer_addr_str[..16.min(peer_addr_str.len())]);
+                pending_peer = Some(peer_addr_str);
             }
 
-            // Accept incoming connections
-            if self.active_connection.is_none() {
-                if let Some(endpoint) = &self.endpoint {
-                    if let Some(incoming) = endpoint.accept().await {
-                        match incoming.await {
-                            Ok(conn) => {
-                                println!(
-                                    "Accepted connection from: {}",
-                                    conn.remote_id().fmt_short()
-                                );
-                                self.active_connection = Some(conn);
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to accept connection: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Handle active connection audio
+            // Check connection health
             if let Some(conn) = &self.active_connection {
-                // Check if connection is still alive
                 if conn.close_reason().is_some() {
                     println!("Connection closed");
                     self.active_connection = None;
-                    continue;
                 }
+            }
+
+            if self.active_connection.is_some() {
+                // Connected: send/receive audio
+                let conn = self.active_connection.as_ref().unwrap();
 
                 // Send audio if not muted
                 if !self.muted {
@@ -114,16 +97,85 @@ impl PhoneIroh {
                     }
                 }
 
-                // Receive audio
-                if let Ok(datagram) = conn.read_datagram().await {
-                    if let Ok(samples) = self.decode_audio(&mut decoder, &datagram) {
-                        audio_system.send_to_speaker(samples);
+                // Use select to receive datagrams without blocking everything
+                tokio::select! {
+                    datagram = conn.read_datagram() => {
+                        if let Ok(datagram) = datagram {
+                            if let Ok(samples) = self.decode_audio(&mut decoder, &datagram) {
+                                audio_system.send_to_speaker(samples);
+                            }
+                        }
+                    }
+                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(5)) => {}
+                }
+            } else if let Some(endpoint) = &self.endpoint {
+                if let Some(ref peer_addr_str) = pending_peer {
+                    // Have a peer address: try both connect AND accept simultaneously
+                    // (both phones get each other's address at the same time, so we
+                    // must accept while also trying to connect to avoid deadlock)
+                    if let Ok(node_id) = peer_addr_str.parse::<iroh::EndpointId>() {
+                        tokio::select! {
+                            result = endpoint.connect(node_id, PHONEBELL_ALPN) => {
+                                match result {
+                                    Ok(conn) => {
+                                        println!("Connected to peer: {}", conn.remote_id().fmt_short());
+                                        self.active_connection = Some(conn);
+                                        pending_peer = None;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to connect to peer: {}", e);
+                                        pending_peer = None;
+                                    }
+                                }
+                            }
+                            incoming = endpoint.accept() => {
+                                if let Some(incoming) = incoming {
+                                    match incoming.await {
+                                        Ok(conn) => {
+                                            println!("Accepted connection from: {}", conn.remote_id().fmt_short());
+                                            self.active_connection = Some(conn);
+                                            pending_peer = None;
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Failed to accept connection: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                                eprintln!("Connection attempt timed out, will retry...");
+                            }
+                        }
+                    } else {
+                        eprintln!("Invalid peer node ID: {}", peer_addr_str);
+                        pending_peer = None;
+                    }
+                } else {
+                    // No pending peer: just wait for incoming connections
+                    tokio::select! {
+                        incoming = endpoint.accept() => {
+                            if let Some(incoming) = incoming {
+                                match incoming.await {
+                                    Ok(conn) => {
+                                        println!(
+                                            "Accepted connection from: {}",
+                                            conn.remote_id().fmt_short()
+                                        );
+                                        self.active_connection = Some(conn);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to accept connection: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        // Wake up periodically to check sync channels for peer address / mute
+                        _ = tokio::time::sleep(tokio::time::Duration::from_millis(50)) => {}
                     }
                 }
+            } else {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
-
-            // Small yield to prevent busy-looping
-            tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         }
     }
 
@@ -145,22 +197,6 @@ impl PhoneIroh {
         );
 
         self.endpoint = Some(endpoint);
-        Ok(())
-    }
-
-    async fn connect_to_peer(&mut self, peer_node_id_str: &str) -> Result<()> {
-        // Parse the node ID from hex string
-        let node_id: iroh::EndpointId = peer_node_id_str.parse()?;
-
-        if let Some(endpoint) = &self.endpoint {
-            let conn = endpoint.connect(node_id, PHONEBELL_ALPN).await?;
-            println!(
-                "Connected to peer: {}",
-                conn.remote_id().fmt_short()
-            );
-            self.active_connection = Some(conn);
-        }
-
         Ok(())
     }
 
