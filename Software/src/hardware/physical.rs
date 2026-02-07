@@ -4,7 +4,7 @@ use debouncr::{debounce_4, Debouncer, Repeat4};
 
 use crate::hardware::PhoneHardware;
 
-use rppal::gpio::{Gpio, InputPin, Level, OutputPin};
+use rppal::gpio::{Gpio, InputPin, OutputPin};
 
 use crate::config::{
     BELL_SOLENOID_FORWARD_PIN, BELL_SOLENOID_REVERSE_PIN, DIAL_LATCH_PIN, DIAL_PULSE_PIN,
@@ -16,6 +16,7 @@ pub struct Hardware {
 
     gpio_read_timer: Duration,
 
+    #[allow(dead_code)]
     gpio: Gpio,
 
     hook_switch: InputPin,

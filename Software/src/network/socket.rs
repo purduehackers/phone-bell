@@ -21,8 +21,8 @@ pub enum SignalingMessage {
 
 pub struct PhoneSocket {
     phone_side: PhoneSide,
-    outgoing_receiver: Receiver<PhoneOutgoingMessage>,
-    incoming_sender: Sender<PhoneIncomingMessage>,
+    outgoing_receiver: mpsc::Receiver<PhoneOutgoingMessage>,
+    incoming_sender: mpsc::Sender<PhoneIncomingMessage>,
 }
 
 pub struct SignalingSocket {

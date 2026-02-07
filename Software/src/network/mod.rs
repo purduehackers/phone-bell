@@ -3,7 +3,7 @@ pub mod socket;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 pub enum PhoneOutgoingMessage {
     Dial { number: String },
