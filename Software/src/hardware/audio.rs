@@ -1,4 +1,12 @@
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{channel, Receiver, Sender, TryRecvError},
+        Arc,
+    },
+    thread,
+    time::Duration,
+};
 
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
@@ -79,67 +87,66 @@ pub enum StreamKind {
 pub struct AudioMixer {
     from_inputs: Receiver<MixerMessage>,
     to_output: Sender<Vec<f32>>,
+    recording: Arc<AtomicBool>,
 }
 
-pub enum MixerMessage {
-    Open(i64),
-    Samples(i64, u16, Vec<f32>),
-    Close(i64),
-}
+impl AudioSystemMarshaller {
+    pub fn create() -> Self {
+        let (input, from_input) = channel();
+        let (to_output, output) = channel::<Vec<f32>>();
+        let recording = Arc::new(AtomicBool::new(false));
+        let recording_flag = recording.clone();
 
-impl AudioMixer {
-    pub fn create() -> (Self, mpsc::Sender<MixerMessage>, mpsc::Receiver<Vec<f32>>) {
-        let (mixer_input, from_inputs) = mpsc::channel();
-        let (to_output, mixer_output) = mpsc::channel();
+        thread::spawn(move || {
+            let mut audio_system = AudioSystem::create();
 
-        (
-            Self {
-                from_inputs,
-                to_output,
-            },
-            mixer_input,
-            mixer_output,
-        )
-    }
+            loop {
+                let input_ready = audio_system.is_input_ready();
+                let output_ready = audio_system.is_output_ready();
 
-    pub fn run(&mut self) {
-        // TODO: Resequence
-        // let mut channel_map = HashMap::<i64, (u16, Vec<f32>)>::new();
+                if input_ready {
+                    // Always drain the cpal channel to prevent buildup,
+                    // but only forward samples when recording is enabled
+                    if let Ok(s) = audio_system.read_next_samples() {
+                        if !s.is_empty() && recording_flag.load(Ordering::Relaxed) {
+                            input.send(s).unwrap();
+                        }
+                    }
+                }
+                while let Ok(r) = output.try_recv() {
+                    if output_ready {
+                        audio_system.write_next_samples(r.as_slice()).unwrap();
+                    }
+                }
 
-        // loop {
-        //     let Ok(mixer_message) = self.from_inputs.recv() else {
-        //         continue;
-        //     };
-
-        //     match mixer_message {
-        //         MixerMessage::Open(channel_number) => {
-        //             channel_map.insert(channel_number, (0, Vec::new()));
-        //         }
-        //         MixerMessage::Samples(channel_number, sequence_number, samples) => {
-        //             let (base_sample, sample_buffer) = channel_map
-        //                 .entry(channel_number)
-        //                 .or_insert_with(|| (0, Vec::new()));
-        //         }
-        //         MixerMessage::Close(channel_number) => {
-        //             let _ = channel_map.remove(&channel_number);
-        //         }
-        //     }
-        // }
-
-        // ! this code is for testing purposes only
-        loop {
-            let Ok(mixer_message) = self.from_inputs.recv() else {
-                continue;
-            };
-
-            match mixer_message {
-                MixerMessage::Open(_) => {}
-                MixerMessage::Samples(_, _, samples) => {
-                    let _ = self.to_output.send(samples);
+                if !input_ready || !output_ready {
+                    // Audio not set up yet, wait before retrying
+                    thread::sleep(Duration::from_secs(2));
+                } else {
+                    // Short sleep to keep output fed continuously
+                    thread::sleep(Duration::from_millis(5));
                 }
                 MixerMessage::Close(_) => {}
             }
+        });
+
+        Self {
+            from_input,
+            to_output,
+            recording,
         }
+    }
+
+    pub fn set_recording(&self, enabled: bool) {
+        self.recording.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn send_to_speaker(&self, data: Vec<f32>) {
+        self.to_output.send(data).unwrap();
+    }
+
+    pub fn try_receive_from_mic(&self) -> Result<Vec<f32>, TryRecvError> {
+        self.from_input.try_recv()
     }
 }
 
@@ -294,20 +301,53 @@ impl AudioSystem {
         self.cpal_host.default_output_device()
     }
 
+    fn pick_config(config_range: cpal::SupportedStreamConfigRange) -> SupportedStreamConfig {
+        // Prefer 48kHz (Opus native rate), then clamp to supported range
+        let target = SampleRate(48000);
+        let min = config_range.min_sample_rate();
+        let max = config_range.max_sample_rate();
+        let rate = if target.0 >= min.0 && target.0 <= max.0 {
+            target
+        } else if target.0 < min.0 {
+            min
+        } else {
+            max
+        };
+        config_range.with_sample_rate(rate)
+    }
+
     fn new_input_config(&self, device: &Device) -> Option<SupportedStreamConfig> {
         match device.supported_input_configs() {
-            Ok(mut supported_configs_range) => supported_configs_range
-                .next()
-                .map(|supported_config| supported_config.with_sample_rate(SampleRate(SAMPLE_RATE))),
-            Err(_) => None,
+            Ok(supported_configs_range) => {
+                let config = supported_configs_range
+                    .map(Self::pick_config)
+                    .next();
+                if config.is_none() {
+                    eprintln!("No supported input configurations available for device");
+                }
+                config
+            }
+            Err(e) => {
+                eprintln!("Error querying supported input configs: {}", e);
+                None
+            }
         }
     }
     fn new_output_config(&self, device: &Device) -> Option<SupportedStreamConfig> {
         match device.supported_output_configs() {
-            Ok(mut supported_configs_range) => supported_configs_range
-                .next()
-                .map(|supported_config| supported_config.with_sample_rate(SampleRate(SAMPLE_RATE))),
-            Err(_) => None,
+            Ok(supported_configs_range) => {
+                let config = supported_configs_range
+                    .map(Self::pick_config)
+                    .next();
+                if config.is_none() {
+                    eprintln!("No supported output configurations available for device");
+                }
+                config
+            }
+            Err(e) => {
+                eprintln!("Error querying supported output configs: {}", e);
+                None
+            }
         }
     }
 
@@ -435,6 +475,10 @@ impl AudioSystem {
             }
             _ => Err(BuildStreamError::StreamConfigNotSupported),
         }
+        .map_err(|e| {
+            eprintln!("Error building input stream: {}", e);
+            e
+        })
         .ok()
     }
     fn input_stream_data_callback<T: Sample>(
@@ -581,6 +625,10 @@ impl AudioSystem {
             }
             _ => Err(BuildStreamError::StreamConfigNotSupported),
         }
+        .map_err(|e| {
+            eprintln!("Error building output stream: {}", e);
+            e
+        })
         .ok()
     }
     fn output_stream_data_callback<T: Sample + FromSample<f32>>(
@@ -590,20 +638,21 @@ impl AudioSystem {
         mute_watcher: &mut watch::Receiver<bool>,
         config: &SupportedStreamConfig,
     ) {
-        let is_mute = *(mute_watcher.borrow_and_update());
-
-        for sample in data.iter_mut().step_by(config.channels() as usize) {
+        const VOLUME_MULTIPLIER: f32 = 0.2;
+        for sample in data.iter_mut() {
             match audio_buffer_reference.try_recv() {
-                Ok(sample_value) => {
-                    *sample = if is_mute {
-                        Sample::EQUILIBRIUM
-                    } else {
-                        T::from_sample(sample_value)
-                    }
-                }
+                Ok(sample_value) => *sample = T::from_sample(sample_value * VOLUME_MULTIPLIER),
                 Err(_) => *sample = Sample::EQUILIBRIUM,
             }
         }
+    }
+
+    pub fn is_input_ready(&self) -> bool {
+        matches!(&self.input_stream, CPALStreamState::DeviceConfigStream(_, _, _))
+    }
+
+    pub fn is_output_ready(&self) -> bool {
+        matches!(&self.output_stream, CPALStreamState::DeviceConfigStream(_, _, _))
     }
 
     pub fn write_next_samples(&mut self, new_samples: &[f32]) -> Result<(), StreamWriteError> {
@@ -634,8 +683,10 @@ impl AudioSystem {
 
         match &self.incoming_audio_buffer {
             Some(buffer) => {
-                while let Ok(sample) = buffer.try_recv() {
-                    self.outgoing_sample_buffer.push(sample);
+                let mut sample_vec = Vec::new();
+
+                for sample in buffer.try_iter() {
+                    sample_vec.push(sample);
                 }
 
                 let mut frames = Vec::new();

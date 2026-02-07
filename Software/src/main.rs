@@ -6,8 +6,7 @@ pub mod hardware;
 
 use std::{str::FromStr, sync::mpsc, thread};
 
-use hardware::audio::{AudioMixer, AudioSystem};
-use network::{rtc::PhoneRTC, socket::PhoneSocket};
+use network::{iroh_voip::PhoneIroh, socket::PhoneSocket};
 
 use dotenv::dotenv;
 use tokio::sync::broadcast;
@@ -37,20 +36,21 @@ async fn main() {
 
     let phone_side = PhoneSide::from_str(&std::env::var("PHONE_SIDE").unwrap()).unwrap();
 
-    let (mut audio_mixer, mixer_inputs, mixed_output) = AudioMixer::create();
+    let (mut phone_socket, mut signaling_socket, outgoing_messages, incoming_messages, iroh_addr_sender, peer_addr_receiver) =
+        PhoneSocket::create(phone_side);
 
-    thread::spawn(move || {
-        audio_mixer.run();
+    let (mut iroh, mute_sender) = PhoneIroh::create(peer_addr_receiver, iroh_addr_sender);
+
+    let phone_control_task = tokio::spawn(async move {
+        phone_socket.run().await;
     });
 
-    let (mic_sender, _) = broadcast::channel(256);
+    let signaling_task = tokio::spawn(async move {
+        signaling_socket.run().await;
+    });
 
-    let audio_system_mic_sender = mic_sender.clone();
-
-    let mut rtc = PhoneRTC::create(mixer_inputs, mic_sender);
-
-    let webrtc_task = tokio::spawn(async move {
-        rtc.run().await;
+    let iroh_task = tokio::spawn(async move {
+        iroh.run().await;
     });
 
     let (mut socket, outgoing_messages, incoming_messages) = PhoneSocket::create(phone_side);
@@ -82,6 +82,7 @@ async fn main() {
 
     ui_entry(outgoing_messages, incoming_messages, mute_sender).await;
 
-    webrtc_task.abort();
-    websocket_task.abort();
+    phone_control_task.abort();
+    signaling_task.abort();
+    iroh_task.abort();
 }

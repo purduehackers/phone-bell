@@ -1,89 +1,42 @@
-FROM rust AS builder
+# Build stage for Raspberry Pi 64-bit
+FROM rust:latest AS builder
 
-ARG TARGET_CRATE=phone-bell-software
+# Install cross-compilation tools for aarch64
+RUN dpkg --add-architecture arm64 && \
+    apt-get update && \
+    apt-get install -y \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
+    libc6-dev-arm64-cross \
+    pkg-config \
+    cmake \
+    libssl-dev:arm64 \
+    libasound2-dev:arm64 \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update
-#RUN apk add soapy-sdr-dev --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
-RUN apt-get install -y build-essential clang libudev-dev software-properties-common libasound2-dev pkg-config cmake
-# RUN npm install npm@latest -g && \
-#     npm install n -g && \
-#     n latest
+# Add the Rust target
+RUN rustup target add aarch64-unknown-linux-gnu
 
+# Set up cross-compilation environment
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+ENV CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+ENV CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
+ENV PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+ENV PKG_CONFIG_ALLOW_CROSS=1
 
-#RUN ldd /usr/lib/libSoapySDR.so && sleep 30
+WORKDIR /app
 
-ENV RUSTFLAGS=-Ctarget-feature=-crt-static
-
-WORKDIR /usr/src/phone-bell
-
-COPY ./assets .
-
-# Copy utility crates
-COPY Cargo.lock ./
-RUN printf "[workspace]\nmembers=[\"$TARGET_CRATE\"]" > Cargo.toml
-
-RUN USER=root cargo new --bin $TARGET_CRATE
-
-# Build external libraries
-WORKDIR /usr/src/phone-bell/$TARGET_CRATE
-COPY Cargo.toml .
-# Clear all path-based (local) packages
-RUN sed --in-place '/path = "\.\./d' Cargo.toml
-#RUN if [[ $TARGETARCH = "amd64" ]] ; then cargo build --target x86_64-unknown-linux-musl --release ; \
-#    else cargo build --target aarch64-unknown-linux-musl --release ; fi
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/src/phone-bell/target \
-    cargo build --release -F real --no-default-features
-
-# Client shit
-# RUN mkdir client
-# COPY $TARGET_CRATE/client/*.* ./client/
-# WORKDIR /usr/src/orbital/$TARGET_CRATE/client
-# RUN if [ -e "package.json" ] ; then npm install ; fi
-
-# Copy and build internal libraries
-WORKDIR /usr/src/phone-bell
-
-WORKDIR /usr/src/phone-bell/$TARGET_CRATE
-COPY Cargo.toml ./Cargo.toml
-
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/src/phone-bell/target \
-    cargo build --release -F real --no-default-features
-RUN rm -r src
-
-RUN --mount=type=cache,target=/usr/src/phone-bell/target \
-    rm /usr/src/phone-bell/target/release/deps/phone_bell_software*
-
-# Build executable
-# Copy actual source files
+# Copy source
 COPY . .
 
-RUN mkdir ../out
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/src/phone-bell/target \
-    cargo build --release -F real --no-default-features && mv ../target/release/$TARGET_CRATE ../out/app
+# Build for Raspberry Pi (no-default-features to skip druid/GUI)
+RUN cargo build --release --target aarch64-unknown-linux-gnu --no-default-features --features real
+RUN aarch64-linux-gnu-strip /app/target/aarch64-unknown-linux-gnu/release/phone-bell-software
 
-WORKDIR /usr/src/phone-bell/out
-ENTRYPOINT ["./app"]
-#ENTRYPOINT ["sleep", "infinity"]
+# The binary will be at /app/target/aarch64-unknown-linux-gnu/release/phone-bell-software
 
-#FROM alpine AS runner
-#
-#EXPOSE 80
-#
-#ARG APP=/usr/src
-#
-#RUN apk update
-#RUN apk add soapy-sdr-dev --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
-#
-#RUN apk add clang npm build-base
-#
-#COPY --from=builder /usr/src/orbital/out/ ${APP}/tmp
-#
-#WORKDIR ${APP}
-#RUN mv tmp/app .
-#RUN if [[ -d "tmp/dist" ]] ; then cp -r ./tmp/dist ./dist ; fi
-#RUN rm -r tmp
-#
-#ENTRYPOINT ["./app"]
+FROM scratch
+COPY --from=builder /app/target/aarch64-unknown-linux-gnu/release/phone-bell-software /phone-bell-software-arm64
+ENTRYPOINT ["/phone-bell-software-arm64"]
+
+# The binary will be at /phone-bell-software-arm64 in the output image

@@ -1,6 +1,6 @@
 [Unit]
 Description=Phone Bell Service
-After=network.target
+After=network.target sound.target
 StartLimitIntervalSec=0
 
 [Service]
@@ -8,8 +8,10 @@ Type=simple
 Restart=always
 RestartSec=1
 User=hackers
-ExecStart=/home/hackers/phone-bell/Software/target/release/phone-bell-software
 WorkingDirectory=/home/hackers/phone-bell/Software
+EnvironmentFile=/home/hackers/phone-bell/Software/.env
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStart=/home/hackers/phone-bell/Software/target/release/phone-bell-software
 
 [Install]
 WantedBy=default.target
