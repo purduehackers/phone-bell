@@ -50,54 +50,68 @@ pub async fn ui_entry(
             if *hardware.dialed_number() != last_dialed_number
                 && !hardware.dialed_number().is_empty()
             {
-                let mut contains = false;
-
-                for number in KNOWN_NUMBERS {
-                    if number == hardware.dialed_number() {
-                        contains = true;
+                if in_call {
+                    // In-call DTMF: forward the latest digit to the server
+                    if let Some(digit) = hardware.dialed_number().chars().last() {
+                        println!("In-call dial: {}", digit);
+                        let _ = network_sender.send(PhoneOutgoingMessage::Dial {
+                            number: digit.to_string(),
+                        });
                     }
-                }
+                    hardware.dialed_number().clear();
+                } else {
+                    // Normal number matching for initiating a call
+                    let mut contains = false;
 
-                if !contains {
                     for number in KNOWN_NUMBERS {
-                        if number.starts_with(&*hardware.dialed_number()) {
+                        if number == hardware.dialed_number() {
                             contains = true;
                         }
                     }
 
                     if !contains {
-                        *hardware.dialed_number() = String::from("0");
+                        for number in KNOWN_NUMBERS {
+                            if number.starts_with(&*hardware.dialed_number()) {
+                                contains = true;
+                            }
+                        }
+
+                        if !contains {
+                            *hardware.dialed_number() = String::from("0");
+                        }
+
+                        contains = !contains;
                     }
 
-                    contains = !contains;
-                }
+                    if contains {
+                        hardware.enable_dialing(false);
 
-                if contains {
-                    hardware.enable_dialing(false);
+                        in_call = true;
 
-                    in_call = true;
+                        println!("Calling: {}", hardware.dialed_number());
+                        let _ = network_sender.send(PhoneOutgoingMessage::Dial {
+                            number: hardware.dialed_number().clone(),
+                        });
 
-                    println!("Calling: {}", hardware.dialed_number());
-                    let _ = network_sender.send(PhoneOutgoingMessage::Dial {
-                        number: hardware.dialed_number().clone(),
-                    });
+                        silent_ring = hardware.dialed_number() == "7";
 
-                    silent_ring = hardware.dialed_number() == "7";
+                        if hook_state {
+                            hardware.ring(true);
+                        } else {
+                            // Unmute immediately; server will also send Mute(false)
+                            let _ = mute_sender.send(false);
+                            sink.clear();
 
-                    if hook_state {
-                        hardware.ring(true);
-                    } else {
-                        // Unmute immediately; server will also send Mute(false)
-                        let _ = mute_sender.send(false);
-                        sink.clear();
-
-                        if !silent_ring {
-                            // ! REMOVE THIS LATER
-                            let client = reqwest::Client::new();
-                            let _ = client
-                                .post("https://api.purduehackers.com/doorbell/ring")
-                                .send()
-                                .await;
+                            if !silent_ring {
+                                // ! REMOVE THIS LATER
+                                tokio::spawn(async {
+                                    let client = reqwest::Client::new();
+                                    let _ = client
+                                        .post("https://api.purduehackers.com/doorbell/ring")
+                                        .send()
+                                        .await;
+                                });
+                            }
                         }
                     }
                 }
@@ -130,6 +144,8 @@ pub async fn ui_entry(
                     in_call = true;
                     sink.clear();
                     let _ = mute_sender.send(false);
+                    hardware.enable_dialing(true);
+                    hardware.dialed_number().clear();
                 } else if in_call {
                     // Picking up after on-hook dial
                     hardware.ring(false);
@@ -183,7 +199,13 @@ pub async fn ui_entry(
                                 sink.append(source.convert_samples::<f32>());
                                 sink.play();
                             }
-                            Sound::Ringback | Sound::Hangup | Sound::None => {
+                            Sound::None => {
+                                sink.clear();
+                                // Call connected — re-enable dialing for in-call DTMF
+                                hardware.enable_dialing(true);
+                                hardware.dialed_number().clear();
+                            }
+                            Sound::Ringback | Sound::Hangup => {
                                 // TODO: add ringback and hangup sound assets
                                 sink.clear();
                             }

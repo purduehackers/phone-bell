@@ -19,6 +19,7 @@ pub struct PhoneIroh {
     peer_addr_receiver: Receiver<String>,
     our_addr_sender: Sender<String>,
     muted: bool,
+    mic_buffer: Vec<f32>,
 }
 
 impl PhoneIroh {
@@ -35,6 +36,7 @@ impl PhoneIroh {
             peer_addr_receiver,
             our_addr_sender,
             muted: true,
+            mic_buffer: Vec::new(),
         };
 
         (iroh, mute_sender)
@@ -68,11 +70,22 @@ impl PhoneIroh {
             // Poll sync channels (mute + peer address)
             while let Ok(mute) = self.mute_receiver.try_recv() {
                 self.muted = mute;
+                audio_system.set_recording(!mute && self.active_connection.is_some());
+                if mute {
+                    self.mic_buffer.clear();
+                }
                 println!("Mute state changed: {}", mute);
             }
 
             while let Ok(peer_addr_str) = self.peer_addr_receiver.try_recv() {
                 println!("Received peer address: {}...", &peer_addr_str[..16.min(peer_addr_str.len())]);
+                // Close any existing connection so we can connect to the new peer
+                // (prevents stale connections from blocking new ones)
+                if let Some(conn) = self.active_connection.take() {
+                    conn.close(0u32.into(), b"new peer");
+                    audio_system.set_recording(false);
+                    println!("Closed existing connection for new peer");
+                }
                 pending_peer = Some(peer_addr_str);
             }
 
@@ -81,6 +94,7 @@ impl PhoneIroh {
                 if conn.close_reason().is_some() {
                     println!("Connection closed");
                     self.active_connection = None;
+                    audio_system.set_recording(false);
                 }
             }
 
@@ -88,12 +102,15 @@ impl PhoneIroh {
                 // Connected: send/receive audio
                 let conn = self.active_connection.as_ref().unwrap();
 
-                // Send audio if not muted
-                if !self.muted {
-                    if let Ok(samples) = audio_system.try_receive_from_mic() {
-                        if let Err(e) = self.send_audio(&encoder, conn, &samples) {
-                            eprintln!("Failed to send audio: {}", e);
-                        }
+                // Drain all available mic samples into the buffer
+                while let Ok(samples) = audio_system.try_receive_from_mic() {
+                    self.mic_buffer.extend_from_slice(&samples);
+                }
+                // Send complete Opus frames
+                while self.mic_buffer.len() >= OPUS_FRAME_SIZE {
+                    let frame: Vec<f32> = self.mic_buffer.drain(..OPUS_FRAME_SIZE).collect();
+                    if let Err(e) = self.send_audio(&encoder, conn, &frame) {
+                        eprintln!("Failed to send audio: {}", e);
                     }
                 }
 
@@ -120,6 +137,7 @@ impl PhoneIroh {
                                     Ok(conn) => {
                                         println!("Connected to peer: {}", conn.remote_id().fmt_short());
                                         self.active_connection = Some(conn);
+                                        audio_system.set_recording(!self.muted);
                                         pending_peer = None;
                                     }
                                     Err(e) => {
@@ -134,6 +152,7 @@ impl PhoneIroh {
                                         Ok(conn) => {
                                             println!("Accepted connection from: {}", conn.remote_id().fmt_short());
                                             self.active_connection = Some(conn);
+                                            audio_system.set_recording(!self.muted);
                                             pending_peer = None;
                                         }
                                         Err(e) => {
@@ -162,6 +181,7 @@ impl PhoneIroh {
                                             conn.remote_id().fmt_short()
                                         );
                                         self.active_connection = Some(conn);
+                                        audio_system.set_recording(!self.muted);
                                     }
                                     Err(e) => {
                                         eprintln!("Failed to accept connection: {}", e);

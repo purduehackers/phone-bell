@@ -1,5 +1,9 @@
 use std::{
-    sync::mpsc::{channel, Receiver, Sender, TryRecvError},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{channel, Receiver, Sender, TryRecvError},
+        Arc,
+    },
     thread,
     time::Duration,
 };
@@ -64,12 +68,16 @@ pub enum StreamKind {
 pub struct AudioSystemMarshaller {
     from_input: Receiver<Vec<f32>>,
     to_output: Sender<Vec<f32>>,
+    recording: Arc<AtomicBool>,
 }
 
 impl AudioSystemMarshaller {
     pub fn create() -> Self {
         let (input, from_input) = channel();
         let (to_output, output) = channel::<Vec<f32>>();
+        let recording = Arc::new(AtomicBool::new(false));
+        let recording_flag = recording.clone();
+
         thread::spawn(move || {
             let mut audio_system = AudioSystem::create();
 
@@ -78,13 +86,15 @@ impl AudioSystemMarshaller {
                 let output_ready = audio_system.is_output_ready();
 
                 if input_ready {
+                    // Always drain the cpal channel to prevent buildup,
+                    // but only forward samples when recording is enabled
                     if let Ok(s) = audio_system.read_next_samples() {
-                        if !s.is_empty() {
+                        if !s.is_empty() && recording_flag.load(Ordering::Relaxed) {
                             input.send(s).unwrap();
                         }
                     }
                 }
-                if let Ok(r) = output.try_recv() {
+                while let Ok(r) = output.try_recv() {
                     if output_ready {
                         audio_system.write_next_samples(r.as_slice()).unwrap();
                     }
@@ -94,8 +104,8 @@ impl AudioSystemMarshaller {
                     // Audio not set up yet, wait before retrying
                     thread::sleep(Duration::from_secs(2));
                 } else {
-                    // Sleep ~20ms to collect one Opus frame worth of samples
-                    thread::sleep(Duration::from_millis(20));
+                    // Short sleep to keep output fed continuously
+                    thread::sleep(Duration::from_millis(5));
                 }
             }
         });
@@ -103,7 +113,12 @@ impl AudioSystemMarshaller {
         Self {
             from_input,
             to_output,
+            recording,
         }
+    }
+
+    pub fn set_recording(&self, enabled: bool) {
+        self.recording.store(enabled, Ordering::Relaxed);
     }
 
     pub fn send_to_speaker(&self, data: Vec<f32>) {
@@ -417,9 +432,10 @@ impl AudioSystem {
         _output_callback_info: &cpal::OutputCallbackInfo,
         audio_buffer_reference: &Receiver<f32>,
     ) {
+        const VOLUME_MULTIPLIER: f32 = 0.2;
         for sample in data.iter_mut() {
             match audio_buffer_reference.try_recv() {
-                Ok(sample_value) => *sample = T::from_sample(sample_value),
+                Ok(sample_value) => *sample = T::from_sample(sample_value * VOLUME_MULTIPLIER),
                 Err(_) => *sample = Sample::EQUILIBRIUM,
             }
         }
