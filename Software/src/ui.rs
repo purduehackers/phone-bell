@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::{
+    config::KNOWN_NUMBERS,
     hardware::{self, PhoneHardware},
     network::{PhoneIncomingMessage, PhoneOutgoingMessage, Sound},
 };
@@ -33,18 +34,18 @@ pub async fn ui_entry(
     let mut in_call = false;
     let mut ringing = false;
     let _ = mute_sender.send(true);
-
     let mut last_hook_state = true;
 
+    let mut last_dialed_number = String::from("");
+
+    let mut silent_ring = false;
+
     #[allow(unused_variables)]
-    let ui_process_join_handle = tokio::spawn(async move {
+    let hnd = tokio::spawn(async move {
         loop {
             hardware.update();
 
-            if !(*hardware.dialed_number()).is_empty() {
-                let _ = network_sender.send(PhoneOutgoingMessage::Dial {
-                    number: hardware.dialed_number().clone(),
-                });
+            let hook_state = hardware.get_hook_state();
 
             if *hardware.dialed_number() != last_dialed_number
                 && !hardware.dialed_number().is_empty()
@@ -116,8 +117,7 @@ pub async fn ui_entry(
                 }
             }
 
-            if hardware.get_hook_state() != last_hook_state {
-                last_hook_state = hardware.get_hook_state();
+            last_dialed_number = hardware.dialed_number().clone();
 
             if last_hook_state != hook_state {
                 let _ = network_sender.send(PhoneOutgoingMessage::Hook { state: hook_state });
@@ -174,17 +174,18 @@ pub async fn ui_entry(
                 }
             }
 
-            while let Ok(network_message) = network_reciever.try_recv() {
-                println!("Network Message: {:?}", network_message);
+            last_hook_state = hook_state;
 
+            for network_message in network_reciever.try_iter() {
                 match network_message {
                     PhoneIncomingMessage::Ring { state } => {
                         println!("Ring: {}", state);
                         hardware.ring(state);
                         ringing = state;
                     }
-                    PhoneIncomingMessage::Mute { state } => {
-                        let _ = mute_sender.send(state);
+                    PhoneIncomingMessage::ClearDial => {
+                        hardware.dialed_number().clear();
+                        hardware.enable_dialing(true);
                     }
                     PhoneIncomingMessage::PlaySound { sound } => {
                         println!("PlaySound: {:?}", sound);
@@ -221,7 +222,7 @@ pub async fn ui_entry(
 
     #[cfg(feature = "real")]
     {
-        let _ = ui_process_join_handle.await;
+        hnd.await;
     }
     #[cfg(not(feature = "real"))]
     {
