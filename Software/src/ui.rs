@@ -38,8 +38,6 @@ pub async fn ui_entry(
 
     let mut last_dialed_number = String::from("");
 
-    let mut silent_ring = false;
-
     #[allow(unused_variables)]
     let hnd = tokio::spawn(async move {
         loop {
@@ -93,25 +91,12 @@ pub async fn ui_entry(
                             number: hardware.dialed_number().clone(),
                         });
 
-                        silent_ring = hardware.dialed_number() == "7";
-
                         if hook_state {
                             hardware.ring(true);
                         } else {
                             // Unmute immediately; server will also send Mute(false)
                             let _ = mute_sender.send(false);
                             sink.clear();
-
-                            if !silent_ring {
-                                // ! REMOVE THIS LATER
-                                tokio::spawn(async {
-                                    let client = reqwest::Client::new();
-                                    let _ = client
-                                        .post("https://api.purduehackers.com/doorbell/ring")
-                                        .send()
-                                        .await;
-                                });
-                            }
                         }
                     }
                 }
@@ -151,15 +136,6 @@ pub async fn ui_entry(
                     hardware.ring(false);
                     sink.clear();
                     let _ = mute_sender.send(false);
-
-                    if !silent_ring {
-                        // ! REMOVE THIS LATER
-                        let client = reqwest::Client::new();
-                        let _ = client
-                            .post("https://api.purduehackers.com/doorbell/ring")
-                            .send()
-                            .await;
-                    }
                     // Server will send Mute(false) and PlaySound(Ringback)
                 } else {
                     // Fresh pickup, no call — play dialtone immediately
@@ -191,9 +167,9 @@ pub async fn ui_entry(
                         println!("PlaySound: {:?}", sound);
                         match sound {
                             Sound::Dialtone => {
-                                let source = Decoder::new_looped(Cursor::new(
-                                    include_bytes!("../assets/dialtone.flac"),
-                                ))
+                                let source = Decoder::new_looped(Cursor::new(include_bytes!(
+                                    "../assets/dialtone.flac"
+                                )))
                                 .unwrap();
                                 sink.clear();
                                 sink.append(source.convert_samples::<f32>());
