@@ -37,6 +37,7 @@ pub async fn ui_entry(
     let mut last_hook_state = true;
 
     let mut last_dialed_number = String::from("");
+    let mut pending_dial: Option<String> = None;
 
     #[allow(unused_variables)]
     let hnd = tokio::spawn(async move {
@@ -59,31 +60,18 @@ pub async fn ui_entry(
                     hardware.dialed_number().clear();
                 } else {
                     // Normal number matching for initiating a call
-                    let mut contains = false;
-
-                    for number in KNOWN_NUMBERS {
-                        if number == hardware.dialed_number() {
-                            contains = true;
-                        }
+                    // If number isn't valid, just assume 0
+                    if !KNOWN_NUMBERS.contains(&hardware.dialed_number().as_str()) {
+                        *hardware.dialed_number() = String::from("0");
                     }
 
-                    if !contains {
-                        for number in KNOWN_NUMBERS {
-                            if number.starts_with(&*hardware.dialed_number()) {
-                                contains = true;
-                            }
-                        }
+                    hardware.enable_dialing(false);
 
-                        if !contains {
-                            *hardware.dialed_number() = String::from("0");
-                        }
-
-                        contains = !contains;
-                    }
-
-                    if contains {
-                        hardware.enable_dialing(false);
-
+                    if hook_state {
+                        // On-hook dial: defer call initiation until pickup
+                        pending_dial = Some(hardware.dialed_number().clone());
+                        hardware.ring(true);
+                    } else {
                         in_call = true;
 
                         println!("Calling: {}", hardware.dialed_number());
@@ -91,13 +79,9 @@ pub async fn ui_entry(
                             number: hardware.dialed_number().clone(),
                         });
 
-                        if hook_state {
-                            hardware.ring(true);
-                        } else {
-                            // Unmute immediately; server will also send Mute(false)
-                            let _ = mute_sender.send(false);
-                            sink.clear();
-                        }
+                        // Unmute immediately; server will also send Mute(false)
+                        let _ = mute_sender.send(false);
+                        sink.clear();
                     }
                 }
             }
@@ -121,6 +105,11 @@ pub async fn ui_entry(
 
                         println!("Call Ended.");
                     }
+
+                    if pending_dial.take().is_some() {
+                        hardware.enable_dialing(true);
+                        hardware.dialed_number().clear();
+                    }
                 } else if ringing {
                     // Answering an incoming call from the server
                     println!("Answering incoming call");
@@ -131,12 +120,19 @@ pub async fn ui_entry(
                     let _ = mute_sender.send(false);
                     hardware.enable_dialing(true);
                     hardware.dialed_number().clear();
+                } else if let Some(number) = pending_dial.take() {
+                    // Picking up after on-hook dial: now initiate the call
+                    hardware.ring(false);
+                    in_call = true;
+                    println!("Calling: {}", number);
+                    let _ = network_sender.send(PhoneOutgoingMessage::Dial { number });
+                    let _ = mute_sender.send(false);
+                    sink.clear();
                 } else if in_call {
-                    // Picking up after on-hook dial
+                    // Already in call, just unmute
                     hardware.ring(false);
                     sink.clear();
                     let _ = mute_sender.send(false);
-                    // Server will send Mute(false) and PlaySound(Ringback)
                 } else {
                     // Fresh pickup, no call — play dialtone immediately
                     // (server will also send PlaySound(Dialtone))
