@@ -114,16 +114,23 @@ impl PhoneIroh {
                     }
                 }
 
-                // Use select to receive datagrams without blocking everything
-                tokio::select! {
-                    datagram = conn.read_datagram() => {
-                        if let Ok(datagram) = datagram {
-                            if let Ok(samples) = self.decode_audio(&mut decoder, &datagram) {
-                                audio_system.send_to_speaker(samples);
+                // Drain all available datagrams to prevent buildup
+                loop {
+                    tokio::select! {
+                        biased;
+                        datagram = conn.read_datagram() => {
+                            if let Ok(datagram) = datagram {
+                                if let Ok(samples) = self.decode_audio(&mut decoder, &datagram) {
+                                    audio_system.send_to_speaker(samples);
+                                }
+                            } else {
+                                break;
                             }
                         }
+                        _ = tokio::time::sleep(tokio::time::Duration::from_millis(1)) => {
+                            break;
+                        }
                     }
-                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(5)) => {}
                 }
             } else if let Some(endpoint) = &self.endpoint {
                 if let Some(ref peer_addr_str) = pending_peer {

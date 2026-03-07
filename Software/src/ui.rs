@@ -1,10 +1,11 @@
 use std::{
     io::Cursor,
     sync::mpsc::{Receiver, Sender},
+    time::Instant,
 };
 
 use crate::{
-    config::KNOWN_NUMBERS,
+    config::{KNOWN_NUMBERS, RING_TIMEOUT_SECS},
     hardware::{self, PhoneHardware},
     network::{PhoneIncomingMessage, PhoneOutgoingMessage, Sound},
 };
@@ -38,6 +39,7 @@ pub async fn ui_entry(
 
     let mut last_dialed_number = String::from("");
     let mut pending_dial: Option<String> = None;
+    let mut ring_start: Option<Instant> = None;
 
     #[allow(unused_variables)]
     let hnd = tokio::spawn(async move {
@@ -82,6 +84,7 @@ pub async fn ui_entry(
                         // Unmute immediately; server will also send Mute(false)
                         let _ = mute_sender.send(false);
                         sink.clear();
+                        ring_start = Some(Instant::now());
                     }
                 }
             }
@@ -97,24 +100,21 @@ pub async fn ui_entry(
                     let _ = mute_sender.send(true);
 
                     if in_call || ringing {
-                        in_call = false;
-                        ringing = false;
-
-                        hardware.enable_dialing(true);
-                        hardware.dialed_number().clear();
-
                         println!("Call Ended.");
                     }
 
-                    if pending_dial.take().is_some() {
-                        hardware.enable_dialing(true);
-                        hardware.dialed_number().clear();
-                    }
+                    in_call = false;
+                    ringing = false;
+                    ring_start = None;
+                    pending_dial = None;
+                    hardware.enable_dialing(true);
+                    hardware.dialed_number().clear();
                 } else if ringing {
                     // Answering an incoming call from the server
                     println!("Answering incoming call");
                     hardware.ring(false);
                     ringing = false;
+                    ring_start = None;
                     in_call = true;
                     sink.clear();
                     let _ = mute_sender.send(false);
@@ -128,6 +128,7 @@ pub async fn ui_entry(
                     let _ = network_sender.send(PhoneOutgoingMessage::Dial { number });
                     let _ = mute_sender.send(false);
                     sink.clear();
+                    ring_start = Some(Instant::now());
                 } else if in_call {
                     // Already in call, just unmute
                     hardware.ring(false);
@@ -147,6 +148,31 @@ pub async fn ui_entry(
             }
 
             last_hook_state = hook_state;
+
+            // Ring timeout: no one picked up — play off-hook tone and end the call
+            if let Some(start) = ring_start {
+                if start.elapsed().as_secs() >= RING_TIMEOUT_SECS {
+                    println!("Ring timeout — no answer");
+                    hardware.ring(false);
+                    ringing = false;
+                    in_call = false;
+                    ring_start = None;
+
+                    // Tell the server we're hanging up so the other side stops ringing
+                    let _ = network_sender.send(PhoneOutgoingMessage::Hook { state: true });
+
+                    // Play off-hook tone
+                    if let Ok(source) = Decoder::new_looped(Cursor::new(
+                        include_bytes!("../assets/off_hook.flac"),
+                    )) {
+                        sink.clear();
+                        sink.append(source.convert_samples::<f32>());
+                        sink.play();
+                    } else {
+                        eprintln!("Failed to decode off_hook.flac");
+                    }
+                }
+            }
 
             for network_message in network_reciever.try_iter() {
                 match network_message {
@@ -173,13 +199,46 @@ pub async fn ui_entry(
                             }
                             Sound::None => {
                                 sink.clear();
-                                // Call connected — re-enable dialing for in-call DTMF
+                                ring_start = None;
+                                // Re-enable dialing for in-call DTMF
                                 hardware.enable_dialing(true);
                                 hardware.dialed_number().clear();
+                                // If phone is still off-hook but not in a call,
+                                // play off-hook tone (e.g. ring timeout, remote hangup)
+                                if !in_call && !hook_state {
+                                    if let Ok(source) = Decoder::new_looped(Cursor::new(
+                                        include_bytes!("../assets/off_hook.flac"),
+                                    )) {
+                                        sink.append(source.convert_samples::<f32>());
+                                        sink.play();
+                                    }
+                                }
                             }
-                            Sound::Ringback | Sound::Hangup => {
-                                // TODO: add ringback and hangup sound assets
+                            Sound::Ringback => {
+                                let source = Decoder::new_looped(Cursor::new(
+                                    include_bytes!("../assets/ringback.flac"),
+                                ))
+                                .unwrap();
                                 sink.clear();
+                                sink.append(source.convert_samples::<f32>());
+                                sink.play();
+                            }
+                            Sound::Hangup => {
+                                in_call = false;
+                                ring_start = None;
+                                sink.clear();
+                                if let Ok(hangup) = Decoder::new(Cursor::new(
+                                    include_bytes!("../assets/hangup.flac"),
+                                )) {
+                                    sink.append(hangup.convert_samples::<f32>());
+                                }
+                                // Follow hangup with looped off-hook tone
+                                if let Ok(off_hook) = Decoder::new_looped(Cursor::new(
+                                    include_bytes!("../assets/off_hook.flac"),
+                                )) {
+                                    sink.append(off_hook.convert_samples::<f32>());
+                                }
+                                sink.play();
                             }
                         }
                     }

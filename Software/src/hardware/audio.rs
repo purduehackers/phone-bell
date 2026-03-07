@@ -16,30 +16,32 @@ use cpal::{
 
 #[macro_export]
 macro_rules! create_output_stream {
-    ($device:tt, $config:tt, $x:ty, $audio_receiver:tt, $error_sender:tt) => {
+    ($device:tt, $config:tt, $x:ty, $audio_receiver:tt, $error_sender:tt) => {{
+        let channels = $config.channels();
         $device.build_output_stream(
             &$config.config(),
-            move |data, info| Self::output_stream_data_callback::<$x>(data, info, &$audio_receiver),
+            move |data, info| Self::output_stream_data_callback::<$x>(data, info, &$audio_receiver, channels),
             move |error| {
                 let _ = $error_sender.send((StreamKind::Outgoing, error));
             },
             None,
         )
-    };
+    }};
 }
 
 #[macro_export]
 macro_rules! create_input_stream {
-    ($device:tt, $config:tt, $x:ty, $audio_receiver:tt, $error_sender:tt) => {
+    ($device:tt, $config:tt, $x:ty, $audio_receiver:tt, $error_sender:tt) => {{
+        let channels = $config.channels();
         $device.build_input_stream(
             &$config.config(),
-            move |data, info| Self::input_stream_data_callback::<$x>(data, info, &$audio_receiver),
+            move |data, info| Self::input_stream_data_callback::<$x>(data, info, &$audio_receiver, channels),
             move |error| {
                 let _ = $error_sender.send((StreamKind::Incoming, error));
             },
             None,
         )
-    };
+    }};
 }
 
 enum CPALStreamState {
@@ -373,11 +375,18 @@ impl AudioSystem {
         data: &[T],
         _output_callback_info: &cpal::InputCallbackInfo,
         audio_buffer_reference: &Sender<f32>,
+        channels: u16,
     ) where
         f32: FromSample<T>,
     {
-        for sample in data.iter() {
-            let _ = audio_buffer_reference.send(sample.to_sample::<f32>());
+        let ch = channels as usize;
+        let frames = data.len() / ch;
+        for frame in 0..frames {
+            let mut sum = 0.0f32;
+            for c in 0..ch {
+                sum += data[frame * ch + c].to_sample::<f32>();
+            }
+            let _ = audio_buffer_reference.send(sum / channels as f32);
         }
     }
 
@@ -431,12 +440,19 @@ impl AudioSystem {
         data: &mut [T],
         _output_callback_info: &cpal::OutputCallbackInfo,
         audio_buffer_reference: &Receiver<f32>,
+        channels: u16,
     ) {
         const VOLUME_MULTIPLIER: f32 = 0.2;
-        for sample in data.iter_mut() {
-            match audio_buffer_reference.try_recv() {
-                Ok(sample_value) => *sample = T::from_sample(sample_value * VOLUME_MULTIPLIER),
-                Err(_) => *sample = Sample::EQUILIBRIUM,
+        let ch = channels as usize;
+        let frames = data.len() / ch;
+        for frame in 0..frames {
+            let sample_value = match audio_buffer_reference.try_recv() {
+                Ok(v) => v * VOLUME_MULTIPLIER,
+                Err(_) => 0.0,
+            };
+            let out = T::from_sample(sample_value);
+            for c in 0..ch {
+                data[frame * ch + c] = out;
             }
         }
     }
