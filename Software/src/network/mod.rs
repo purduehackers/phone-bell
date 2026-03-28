@@ -16,6 +16,7 @@ pub enum Sound {
     Dialtone,
     Ringback,
     Hangup,
+    DoorOpen,
 }
 
 #[derive(Serialize, Deserialize)]

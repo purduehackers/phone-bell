@@ -240,6 +240,14 @@ pub async fn ui_entry(
                                 }
                                 sink.play();
                             }
+                            Sound::DoorOpen => {
+                                if let Ok(source) = Decoder::new(Cursor::new(
+                                    include_bytes!("../assets/door_open.flac"),
+                                )) {
+                                    sink.append(source.convert_samples::<f32>());
+                                    sink.play();
+                                }
+                            }
                         }
                     }
                     PhoneIncomingMessage::Mute { state } => {
