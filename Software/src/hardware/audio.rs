@@ -1,8 +1,9 @@
 use std::{
+    collections::VecDeque,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{channel, Receiver, Sender, TryRecvError},
-        Arc,
+        Arc, Mutex,
     },
     thread,
     time::Duration,
@@ -16,11 +17,12 @@ use cpal::{
 
 #[macro_export]
 macro_rules! create_output_stream {
-    ($device:tt, $config:tt, $x:ty, $audio_receiver:tt, $error_sender:tt) => {{
+    ($device:tt, $config:tt, $x:ty, $audio_buffer:tt, $error_sender:tt) => {{
         let channels = $config.channels();
+        let buffer = Arc::clone(&$audio_buffer);
         $device.build_output_stream(
             &$config.config(),
-            move |data, info| Self::output_stream_data_callback::<$x>(data, info, &$audio_receiver, channels),
+            move |data, info| Self::output_stream_data_callback::<$x>(data, info, &buffer, channels),
             move |error| {
                 let _ = $error_sender.send((StreamKind::Outgoing, error));
             },
@@ -69,23 +71,23 @@ pub enum StreamKind {
 
 pub struct AudioSystemMarshaller {
     from_input: Receiver<Vec<f32>>,
-    to_output: Sender<Vec<f32>>,
+    output_buffer: Arc<Mutex<VecDeque<f32>>>,
     recording: Arc<AtomicBool>,
 }
 
 impl AudioSystemMarshaller {
     pub fn create() -> Self {
         let (input, from_input) = channel();
-        let (to_output, output) = channel::<Vec<f32>>();
+        let output_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(48000))); // 1s buffer
         let recording = Arc::new(AtomicBool::new(false));
         let recording_flag = recording.clone();
+        let output_buf_for_audio = Arc::clone(&output_buffer);
 
         thread::spawn(move || {
-            let mut audio_system = AudioSystem::create();
+            let mut audio_system = AudioSystem::create(output_buf_for_audio);
 
             loop {
                 let input_ready = audio_system.is_input_ready();
-                let output_ready = audio_system.is_output_ready();
 
                 if input_ready {
                     // Always drain the cpal channel to prevent buildup,
@@ -96,17 +98,10 @@ impl AudioSystemMarshaller {
                         }
                     }
                 }
-                while let Ok(r) = output.try_recv() {
-                    if output_ready {
-                        audio_system.write_next_samples(r.as_slice()).unwrap();
-                    }
-                }
 
-                if !input_ready || !output_ready {
-                    // Audio not set up yet, wait before retrying
+                if !input_ready {
                     thread::sleep(Duration::from_secs(2));
                 } else {
-                    // Short sleep to keep output fed continuously
                     thread::sleep(Duration::from_millis(5));
                 }
             }
@@ -114,7 +109,7 @@ impl AudioSystemMarshaller {
 
         Self {
             from_input,
-            to_output,
+            output_buffer,
             recording,
         }
     }
@@ -124,7 +119,14 @@ impl AudioSystemMarshaller {
     }
 
     pub fn send_to_speaker(&self, data: Vec<f32>) {
-        self.to_output.send(data).unwrap();
+        let mut buf = self.output_buffer.lock().unwrap();
+        // Cap buffer size to prevent unbounded growth (500ms max)
+        const MAX_BUFFER_SAMPLES: usize = 48000 / 2;
+        if buf.len() + data.len() > MAX_BUFFER_SAMPLES {
+            let overflow = (buf.len() + data.len()) - MAX_BUFFER_SAMPLES;
+            buf.drain(..overflow);
+        }
+        buf.extend(data.iter());
     }
 
     pub fn try_receive_from_mic(&self) -> Result<Vec<f32>, TryRecvError> {
@@ -140,14 +142,14 @@ pub struct AudioSystem {
 
     incoming_audio_buffer: Option<Receiver<f32>>,
 
-    outgoing_audio_buffer: Option<Sender<f32>>,
+    outgoing_audio_buffer: Arc<Mutex<VecDeque<f32>>>,
 
     pub error_buffer: Receiver<(StreamKind, StreamError)>,
     error_buffer_sender: Sender<(StreamKind, StreamError)>,
 }
 
 impl AudioSystem {
-    pub fn create() -> AudioSystem {
+    pub fn create(output_buffer: Arc<Mutex<VecDeque<f32>>>) -> AudioSystem {
         let cpal_host = cpal::default_host();
 
         let (error_buffer_sender, error_buffer) = channel();
@@ -159,7 +161,7 @@ impl AudioSystem {
             output_stream: CPALStreamState::Nothing,
 
             incoming_audio_buffer: Option::None,
-            outgoing_audio_buffer: Option::None,
+            outgoing_audio_buffer: output_buffer,
 
             error_buffer,
             error_buffer_sender,
@@ -241,12 +243,10 @@ impl AudioSystem {
                     self.output_stream = CPALStreamState::DeviceConfig(device.clone(), config);
                 }
                 CPALStreamState::DeviceConfig(device, config) => {
-                    let (audio_sender, audio_receiver) = channel::<f32>();
-
                     let Some(stream) = self.new_output_stream(
                         device,
                         config,
-                        audio_receiver,
+                        Arc::clone(&self.outgoing_audio_buffer),
                         self.error_buffer_sender.clone(),
                     ) else {
                         println!("Failed to init audio streams!");
@@ -255,8 +255,6 @@ impl AudioSystem {
                     };
 
                     let _ = stream.play();
-
-                    self.outgoing_audio_buffer = Option::Some(audio_sender);
 
                     self.output_stream =
                         CPALStreamState::DeviceConfigStream(device.clone(), config.clone(), stream);
@@ -394,39 +392,39 @@ impl AudioSystem {
         &self,
         device: &Device,
         config: &SupportedStreamConfig,
-        audio_receiver: Receiver<f32>,
+        audio_buffer: Arc<Mutex<VecDeque<f32>>>,
         error_sender: Sender<(StreamKind, StreamError)>,
     ) -> Option<Stream> {
         match config.sample_format() {
             SampleFormat::F32 => {
-                create_output_stream!(device, config, f32, audio_receiver, error_sender)
+                create_output_stream!(device, config, f32, audio_buffer, error_sender)
             }
             SampleFormat::I16 => {
-                create_output_stream!(device, config, i16, audio_receiver, error_sender)
+                create_output_stream!(device, config, i16, audio_buffer, error_sender)
             }
             SampleFormat::U16 => {
-                create_output_stream!(device, config, u16, audio_receiver, error_sender)
+                create_output_stream!(device, config, u16, audio_buffer, error_sender)
             }
             SampleFormat::I8 => {
-                create_output_stream!(device, config, i8, audio_receiver, error_sender)
+                create_output_stream!(device, config, i8, audio_buffer, error_sender)
             }
             SampleFormat::I32 => {
-                create_output_stream!(device, config, i32, audio_receiver, error_sender)
+                create_output_stream!(device, config, i32, audio_buffer, error_sender)
             }
             SampleFormat::I64 => {
-                create_output_stream!(device, config, i64, audio_receiver, error_sender)
+                create_output_stream!(device, config, i64, audio_buffer, error_sender)
             }
             SampleFormat::U8 => {
-                create_output_stream!(device, config, u8, audio_receiver, error_sender)
+                create_output_stream!(device, config, u8, audio_buffer, error_sender)
             }
             SampleFormat::U32 => {
-                create_output_stream!(device, config, u32, audio_receiver, error_sender)
+                create_output_stream!(device, config, u32, audio_buffer, error_sender)
             }
             SampleFormat::U64 => {
-                create_output_stream!(device, config, u64, audio_receiver, error_sender)
+                create_output_stream!(device, config, u64, audio_buffer, error_sender)
             }
             SampleFormat::F64 => {
-                create_output_stream!(device, config, f64, audio_receiver, error_sender)
+                create_output_stream!(device, config, f64, audio_buffer, error_sender)
             }
             _ => Err(BuildStreamError::StreamConfigNotSupported),
         }
@@ -439,17 +437,15 @@ impl AudioSystem {
     fn output_stream_data_callback<T: Sample + FromSample<f32>>(
         data: &mut [T],
         _output_callback_info: &cpal::OutputCallbackInfo,
-        audio_buffer_reference: &Receiver<f32>,
+        audio_buffer: &Arc<Mutex<VecDeque<f32>>>,
         channels: u16,
     ) {
         const VOLUME_MULTIPLIER: f32 = 0.2;
         let ch = channels as usize;
         let frames = data.len() / ch;
+        let mut buf = audio_buffer.lock().unwrap();
         for frame in 0..frames {
-            let sample_value = match audio_buffer_reference.try_recv() {
-                Ok(v) => v * VOLUME_MULTIPLIER,
-                Err(_) => 0.0,
-            };
+            let sample_value = buf.pop_front().unwrap_or(0.0) * VOLUME_MULTIPLIER;
             let out = T::from_sample(sample_value);
             for c in 0..ch {
                 data[frame * ch + c] = out;
@@ -468,15 +464,9 @@ impl AudioSystem {
     pub fn write_next_samples(&mut self, new_samples: &[f32]) -> Result<(), StreamWriteError> {
         self.prepare_output();
 
-        match &self.outgoing_audio_buffer {
-            Some(buffer) => {
-                for sample in new_samples.iter() {
-                    let _ = buffer.send(*sample);
-                }
-                Ok(())
-            }
-            None => Err(StreamWriteError::NoStream),
-        }
+        let mut buf = self.outgoing_audio_buffer.lock().unwrap();
+        buf.extend(new_samples.iter());
+        Ok(())
     }
 
     pub fn read_next_samples(&mut self) -> Result<Vec<f32>, StreamReadError> {
