@@ -103,13 +103,8 @@ impl PhoneIroh {
                 let conn = self.active_connection.as_ref().unwrap();
 
                 // Drain all available mic samples into the buffer
-                let mut got_mic = false;
                 while let Ok(samples) = audio_system.try_receive_from_mic() {
                     self.mic_buffer.extend_from_slice(&samples);
-                    got_mic = true;
-                }
-                if got_mic && self.mic_buffer.len() >= OPUS_FRAME_SIZE {
-                    println!("[audio] mic buffer: {} samples", self.mic_buffer.len());
                 }
                 // Send complete Opus frames
                 while self.mic_buffer.len() >= OPUS_FRAME_SIZE {
@@ -119,20 +114,23 @@ impl PhoneIroh {
                     }
                 }
 
-                // Receive audio datagrams
-                tokio::select! {
-                    datagram = conn.read_datagram() => {
-                        match &datagram {
-                            Ok(d) => println!("[audio] received datagram: {} bytes", d.len()),
-                            Err(e) => eprintln!("[audio] datagram error: {}", e),
-                        }
-                        if let Ok(datagram) = datagram {
-                            if let Ok(samples) = self.decode_audio(&mut decoder, &datagram) {
-                                audio_system.send_to_speaker(samples);
+                // Drain all available datagrams to prevent buildup
+                loop {
+                    tokio::select! {
+                        biased;
+                        datagram = conn.read_datagram() => {
+                            if let Ok(datagram) = datagram {
+                                if let Ok(samples) = self.decode_audio(&mut decoder, &datagram) {
+                                    audio_system.send_to_speaker(samples);
+                                }
+                            } else {
+                                break;
                             }
                         }
+                        _ = tokio::time::sleep(tokio::time::Duration::from_millis(1)) => {
+                            break;
+                        }
                     }
-                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(5)) => {}
                 }
             } else if let Some(endpoint) = &self.endpoint {
                 if let Some(ref peer_addr_str) = pending_peer {
